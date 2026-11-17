@@ -7,6 +7,8 @@ use crate::value::Value;
 pub enum Error {
     /// A path is malformed or unknown for the schema.
     Path { path: String, reason: String },
+    /// Authored expressions could not be resolved to concrete facts.
+    Eval { path: String, reason: String },
     /// The DSL text is not well formed.
     Parse {
         line: usize,
@@ -47,6 +49,13 @@ impl Error {
         }
     }
 
+    pub(crate) fn eval(path: impl Into<String>, reason: impl Into<String>) -> Error {
+        Error::Eval {
+            path: path.into(),
+            reason: reason.into(),
+        }
+    }
+
     pub(crate) fn fold(path: Path, reason: impl Into<String>) -> Error {
         Error::Fold {
             path,
@@ -77,6 +86,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Path { path, reason } => write!(f, "invalid path {path}: {reason}"),
+            Error::Eval { path, reason } => write!(f, "evaluation failed at {path}: {reason}"),
             Error::Parse {
                 line,
                 column,

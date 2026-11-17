@@ -133,13 +133,49 @@ Defaults, constraints and candidates stay in the state. A candidate that violate
 
 ## Resolution
 
-References, conditionals, comprehensions, interpolation and module schemas are in scope, but they do not live in the fact algebra. Resolution turns authored config into concrete facts before the state:
+References, conditionals, comprehensions, interpolation and non-literal defaults are in scope, but they do not live in the fact algebra. Resolution turns authored config into concrete facts before the state:
 
 ```text
 authoring -> resolution -> facts -> State -> fold -> Materialize
 ```
 
-`fold` and `Materialize` never see a reference or a comprehension. In v1 the host, or the CUE evaluator of modot, performs resolution and hands the crate a `Vec<Fact>`. A built-in evaluator would plug in before `State` and leave the algebra unchanged.
+`evaluate::<T>(source, &context, stamp)` performs that resolution. It emits only `Fact`s with concrete `Value`s, so `fold` and `Materialize` never see authored syntax. `parse` remains the concrete subset front end; `evaluate` adds references and the other authored forms.
+
+```rust
+use colcha::{Context, EmptyHost, NodeId, Stamp, State, evaluate, resolve};
+
+let source = r#"
+    name: "service"
+    host: runtime.hostname
+    label: "\(name)@\(host)"
+    theme: *"dark" | string
+    if theme == "dark" {
+        mode: "night"
+    } else {
+        mode: "day"
+    }
+    aliases: {
+        for key, value in known {
+            "\(key)-alias": value
+        }
+    }
+"#;
+
+let context = Context::new()
+    .with("runtime.hostname", colcha::Value::String("box".into()))?
+    .with(
+        "known",
+        colcha::Value::Map([("a".into(), colcha::Value::String("one".into()))].into()),
+    )?;
+
+let mut state = State::empty();
+for fact in evaluate::<Config>(source, &context, Stamp::new(1, NodeId::from_u128(1)))? {
+    state.insert::<Config>(fact)?;
+}
+let config = resolve::<Config>(&state, &EmptyHost)?;
+```
+
+References resolve in this order: comprehension binding, document field (including forward references), then `Context`. A missing reference, a cycle, an active duplicate or an ambiguous reference returns `Error::Eval`. Interpolation accepts scalars only. Truthiness is false for `null`, `false`, `0`, `0.0`, empty string, empty list and empty map.
 
 ## Defaults
 
@@ -248,11 +284,11 @@ On NixOS without `cc` on `PATH`, run the same command under a compiler:
 nix shell nixpkgs#gcc --command cargo test --workspace
 ```
 
-The suite covers the merge laws, compact equivalence, parser robustness, LWW, conflicts, tombstones, keyed lists, schema identity and native materialization.
+The suite covers the merge laws, compact equivalence, parser robustness, LWW, conflicts, tombstones, keyed lists, schema identity and native materialization. It also covers authored resolution: references, interpolation, conditionals, comprehensions and non-literal defaults.
 
 ## CUE parity corpus
 
-`fixtures/cue-parity/` records real `modot home config dump` output for CUE features that colcha does not model yet. Its [README](fixtures/cue-parity/README.md) holds the feature checklist, the refresh command, and the open gaps.
+`fixtures/cue-parity/` records real `modot home config dump` output for CUE features that colcha models in the fact algebra or resolves in `evaluate`. Its [README](fixtures/cue-parity/README.md) holds the feature checklist, the refresh command, and the open gaps.
 
 ## Limits
 

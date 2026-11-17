@@ -174,6 +174,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-29 | `MinLen` é avaliado sobre a lista dobrada, inclusive default e lista por chave. | `fold`, `Constraint` | validar só candidato atômico |
 | INV-30 | `Concat` ordena por `(Stamp, Value)` e preserva duplicatas; fato não-lista é `Error::Fold`. | `fold` | ordenar por chegada; deduplicar itens |
 | INV-31 | A resolução emite só fatos concretos; `fold` e `Materialize` não interpretam autoria. | `State`, `fold` | resolver referência na dobra |
+| INV-32 | O avaliador resolve binding local, campo do documento e `Context`, nessa ordem. Ciclo, ambiguidade e referência não resolvida são `Error::Eval`. | `evaluate` | resolver na dobra; preferir contexto ao documento |
 
 ## Errors
 
@@ -185,6 +186,9 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `parse::<T>` | chave duplicada no mesmo bloco | `Error::Path`; nenhum fato é devolvido |
 | `parse::<T>` | entrada acima de 1 MiB, aninhamento acima de 32 | `Error::Parse`; nenhum fato é devolvido |
 | `parse::<T>` | nativo fora do conjunto permitido pelo `Node` | `Error::Native`; nenhum fato é devolvido |
+| `evaluate::<T>(source, context, stamp)` | sintaxe inválida | `Error::Parse`; nenhum fato é devolvido |
+| `evaluate::<T>` | caminho desconhecido para o schema | `Error::Path`; nenhum fato é devolvido |
+| `evaluate::<T>` | referência não resolvida, ciclo, campo ativo duplicado ou referência ambígua | `Error::Eval`; nenhum fato é devolvido |
 | `State::insert::<T>(fact)` | caminho malformado, caminho desconhecido, escrita em campo-chave | `Error::Path`; estado inalterado |
 | `State::insert::<T>` | `SchemaId` diferente de `T::NAME` + `T::VERSION` | `Error::Schema`; estado inalterado |
 | `State::insert::<T>` | fato já presente | sem erro; o conjunto não muda |
@@ -205,6 +209,11 @@ A crate `colcha` expõe a álgebra. A crate `colcha-derive` implementa `#[derive
 
 ```rust
 pub fn parse<T: Schema>(source: &str, stamp: Stamp) -> Result<Vec<Fact>>;
+pub fn evaluate<T: Schema>(
+    source: &str,
+    context: &Context,
+    stamp: Stamp,
+) -> Result<Vec<Fact>>;
 pub fn fold<T: Schema>(state: &State, registry: &dyn NativeRegistry) -> Result<Value>;
 pub fn resolve<T: Schema + Materialize>(state: &State, host: &dyn NativeHost) -> Result<T>;
 
@@ -217,7 +226,7 @@ impl State {
 }
 ```
 
-`parse` usa `T::schema()`, `T::NAME` e `T::VERSION`. `fold` é a verificação pura. `resolve` executa `fold`, valida a identidade do schema e materializa; só `resolve` chama `NativeHost::build`.
+`parse` lê o subconjunto concreto da DSL. `evaluate` lê a autoria completa, resolve referências, interpolação, condicionais, comprehensions e defaults não literais, e devolve fatos concretos. `fold` é a verificação pura. `resolve` executa `fold`, valida a identidade do schema e materializa; só `resolve` chama `NativeHost::build`.
 
 ## Resolution phase
 
@@ -239,9 +248,39 @@ Schema por módulo também termina na resolução: ela reduz o schema efetivo ao
 schema do tipo Rust, representando o resto como `Raw`, e emite fatos com um
 `SchemaId` único.
 
-A v1 não embute o avaliador: o host ou o CUE do modot resolve a autoria e entrega
-os fatos. A crate expõe a álgebra. Um avaliador embutido entra antes de `State` e
-não muda `fold`, `State` nem `Materialize`.
+A v1 embute um avaliador na fase de resolução. `evaluate::<T>` recebe a autoria,
+um `Context` do host e o `Stamp`, e devolve `Vec<Fact>`. O avaliador não muda
+`fold`, `State` nem `Materialize`; ele apenas produz fatos concretos antes da
+inserção.
+
+O avaliador MUST resolver, nesta ordem:
+
+1. Binding local de comprehension.
+2. Campo do documento, inclusive referência para frente.
+3. Valor do `Context`.
+
+A mesma ordem vale para interpolação de string, condições e defaults não
+literais. Referência não resolvida, ciclo, campo ativo duplicado ou referência
+ambígua devolvem `Error::Eval`.
+
+Sintaxe da autoria:
+
+| Forma | Exemplo | Regra |
+|-------|---------|-------|
+| referência | `accent: options.theme.accent` | caminho pontuado, case-sensitive |
+| interpolação | `"\(name)-\(index)"` | só escalar; string, inteiro, float, bool ou `null` |
+| condicional | `if mode == "dark" { ... } else { ... }` | `==`, `!=` ou truthiness |
+| comprehension | `for name, app in sources { ... }` | fonte mapa ou lista |
+| default não literal | `active: *theme_name` | resolve para um valor concreto |
+
+Truthiness é falsa para `null`, `false`, `0`, `0.0`, string vazia, lista vazia e
+mapa vazio; qualquer outro valor é verdadeiro. Em comprehension sobre mapa, a
+chave é `String`; sobre lista, o índice é `Int`. Chave de campo pode usar
+interpolação apenas com bindings de comprehension.
+
+O avaliador MUST NOT implementar aritmética, `&&`, `||`, funções, imports ou
+módulos. Expressão sem valor concreto, como um campo que só declara
+constraints, não é referenciável.
 
 ### Core shapes
 
@@ -357,7 +396,8 @@ pub trait NativeType: Sized {
 
 | Variant | Payload | Raised by |
 |---------|---------|-----------|
-| `Error::Path` | caminho, razão | parser e `State::insert` |
+| `Error::Path` | caminho, razão | parser, `State::insert` |
+| `Error::Eval` | caminho, razão | `evaluate` |
 | `Error::Parse` | linha, coluna, mensagem | parser |
 | `Error::Schema` | esperado `SchemaId`, encontrado `SchemaId` | `State::insert`, `fold`, `resolve` |
 | `Error::Fold` | caminho, razão | `fold`, `resolve` |
@@ -558,7 +598,7 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 13. Canal de avisos para candidatos inválidos descartados.
 14. `no_std` e WASM.
 15. Trait público `Fold` para políticas customizadas.
-16. Avaliador embutido de referências, condicionais e comprehensions antes de `State`.
+16. Aritmética, `&&`, `||` e funções na autoria avaliada.
 
 ## Assumptions
 
@@ -583,3 +623,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0010: campo rest para structs abertas. Rejeitados: struct aberta implícita; ignorar chave desconhecida; aninhar extras no campo rest.
 - ADR-0011: listas concat. Rejeitados: união ordenada por item; lista CRDT com identidade de elemento; retração por item na v1.
 - ADR-0012: resolução antes da materialização. Rejeitados: referências como fatos; resolver durante a dobra; schema dinâmico dentro de `fold`.
+- ADR-0013: avaliador embutido na resolução. Rejeitados: avaliar na dobra; engine CUE completo; substituição textual de referências.

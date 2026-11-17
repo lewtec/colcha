@@ -215,8 +215,9 @@ autoria e emite `Fact` com `Value` concreto antes de `State`. `fold` e
 `Materialize` nunca veem uma referência ou comprehension.
 
 O fluxo é `autoria -> resolução -> Vec<Fact> -> State -> fold -> Materialize`.
-Na v1 a resolução é o CUE do modot ou o host; um avaliador embutido entra antes
-de `State` sem mudar a álgebra. Ver ADR-0012.
+A v1 embute `evaluate::<T>` para referências, interpolação, condicionais,
+comprehensions e defaults não literais. Módulos continuam fora da crate; o host
+reduz o schema efetivo antes de chamar `evaluate`. Ver ADR-0012 e ADR-0013.
 
 ### P3: schema dinâmico por módulo (em escopo, na resolução)
 
@@ -227,7 +228,7 @@ ao schema do tipo, representa o resto como `Raw` ou campo rest e emite todos os
 fatos com um `SchemaId` único. `T::schema()` e `fold::<T>` continuam estáticos;
 `fold::<T>` rejeita schema estrangeiro.
 
-Um avaliador embutido pode montar o schema antes de `State`, mas o contrato de
+Um avaliador embutido monta o schema antes de `State`, mas o contrato de
 `SchemaId` não muda dentro da dobra.
 
 ## Prioridade
@@ -244,8 +245,8 @@ Um avaliador embutido pode montar o schema antes de `State`, mas o contrato de
 6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. A v1 mantém
    `Option<T>` para ausência e `null`; `Nullable` fica fora.
 7. Resolução de autoria (referências, condicionais, comprehensions,
-   interpolação e schema por módulo). Em escopo, antes de `State`. O CUE do
-   modot já faz isso; um avaliador embutido entra depois.
+   interpolação e defaults não literais). Feito em `evaluate`, antes de
+   `State`. Schema por módulo continua no host.
 
 ## Recomendação
 
@@ -257,7 +258,7 @@ Essa leitura é compatível com o SPEC: sem módulos na DSL, com resolução ant
 `State` e com `fold` puro. Referências, comprehensions e schema dinâmico estão
 no escopo, mas resolvem antes da materialização. Ver ADR-0012.
 
-O avaliador embutido é trabalho posterior. Ele não muda `fold`, `State` nem
+O avaliador embutido da v1 é `evaluate::<T>`. Ele não muda `fold`, `State` nem
 `Materialize`; só produz os fatos.
 
 ## Evidência

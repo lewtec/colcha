@@ -6,7 +6,9 @@
 
 extern crate self as colcha;
 
+mod emit;
 mod error;
+mod eval;
 mod fact;
 mod fold;
 mod materialize;
@@ -23,6 +25,7 @@ mod value;
 pub use colcha_derive::{Materialize, Schema};
 
 pub use crate::error::Error;
+pub use crate::eval::{Context, evaluate};
 pub use crate::fact::{Fact, FactKind};
 pub use crate::fold::fold;
 pub use crate::materialize::Materialize;

@@ -43,7 +43,8 @@ merge nem na materialização. O custo é que a crate sozinha não lê `modot.cu
 quem a alimenta precisa resolver a autoria primeiro.
 
 Um avaliador embutido, quando existir, entra antes de `State`. Ele não altera a
-assinatura de `fold`, `resolve` ou `Materialize`.
+assinatura de `fold`, `resolve` ou `Materialize`. O avaliador embutido da v1 é
+`evaluate::<T>`; a decisão e a sintaxe estão no ADR-0013.
 
 ## Rejected
 
