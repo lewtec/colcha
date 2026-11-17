@@ -114,6 +114,102 @@ fn same_stamp_different_values_conflict() {
     let second = state_of::<Service>(r#"name: "second""#, 1);
     let error = fold::<Service>(&first.union(&second), &EmptyHost).expect_err("conflict");
     assert!(matches!(error, Error::Conflict { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("\"first\" vs \"second\""), "{message}");
+    assert!(!message.contains("String("), "{message}");
+}
+
+#[test]
+fn an_explicit_invalid_candidate_does_not_fall_back_to_a_default() {
+    let state = state_of::<Service>(
+        r#"
+        name: "checkout"
+        threshold: 200.0 & <=100
+        "#,
+        1,
+    );
+    let error = fold::<Service>(&state, &EmptyHost).expect_err("invalid candidate");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("no candidate satisfies"), "{message}");
+    assert!(message.contains("200.0 (float)"), "{message}");
+    assert!(message.contains("<= 100"), "{message}");
+}
+
+#[test]
+fn an_explicit_invalid_default_is_an_error() {
+    let state = state_of::<Service>(
+        r#"
+        name: "checkout"
+        threshold: *200.0 & <=100
+        "#,
+        1,
+    );
+    let error = fold::<Service>(&state, &EmptyHost).expect_err("invalid default");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(
+        message.contains("no configured default satisfies"),
+        "{message}"
+    );
+    assert!(message.contains("200.0 (float)"), "{message}");
+}
+
+#[test]
+fn an_absent_candidate_still_uses_the_schema_default() {
+    let state = state_of::<Service>(r#"name: "checkout""#, 1);
+    let value = fold::<Service>(&state, &EmptyHost).expect("fold");
+    assert_eq!(
+        value.as_map().unwrap().get("threshold"),
+        Some(&Value::Float(colcha::Float::new(0.0).unwrap()))
+    );
+}
+
+#[test]
+fn a_missing_required_field_names_the_field() {
+    let error = fold::<Service>(&State::empty(), &EmptyHost).expect_err("missing field");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("at name"), "{message}");
+    assert!(message.contains("required field is missing"), "{message}");
+}
+
+#[test]
+fn an_unknown_field_suggests_a_close_name() {
+    let error = parse::<Service>(r#"nmae: "checkout""#, stamp(1)).expect_err("unknown field");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("did you mean 'name'?"), "{message}");
+    assert!(message.contains("(at 1:1)"), "{message}");
+}
+
+#[test]
+fn a_semantic_error_reports_the_entry_position() {
+    let error = parse::<Service>(
+        r#"name: "checkout"
+threshold: 12.5
+bogus: 1"#,
+        stamp(1),
+    )
+    .expect_err("unknown field");
+    let message = error.to_string();
+    assert!(message.contains("unknown field 'bogus'"), "{message}");
+    assert!(message.contains("(at 3:1)"), "{message}");
+}
+
+#[test]
+fn an_unknown_native_lists_the_allowed_names() {
+    let error = parse::<NativeConfig>(
+        r#"name: "x"
+hook: _core.Nope { url: "u" }"#,
+        stamp(1),
+    )
+    .expect_err("unknown native");
+    assert!(matches!(error, Error::Native { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("Nope"), "{message}");
+    assert!(message.contains("allowed names: Hook"), "{message}");
+    assert!(message.contains("(at 2:1)"), "{message}");
 }
 
 #[test]

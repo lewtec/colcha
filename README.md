@@ -126,7 +126,7 @@ Config {
 | `resolve` | `fold` plus `Materialize`; runs `NativeHost::build` |
 | Tombstone | fact that absorbs older facts in its path subtree |
 
-Defaults, constraints and candidates stay in the state. A candidate that violates a constraint loses without causing a conflict. Without a valid candidate, the fold uses the config default, then the schema default, then `Error::Fold`.
+Defaults, constraints and candidates stay in the state. A candidate that violates a constraint loses to a valid candidate without causing a conflict. When every explicit candidate violates a constraint, the fold fails instead of falling back to a default. The fold uses the config default and then the schema default only when no candidate is present; missing required values are `Error::Fold`.
 
 ## Resolution
 

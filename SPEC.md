@@ -174,6 +174,8 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-29 | `MinLen` é avaliado sobre a lista dobrada, inclusive default e lista por chave. | `fold`, `Constraint` | validar só candidato atômico |
 | INV-31 | A resolução emite só fatos concretos; `fold` e `Materialize` não interpretam autoria. | `State`, `fold` | resolver referência na dobra |
 | INV-32 | O avaliador resolve binding local, campo do documento e `Context`, nessa ordem. Ciclo, ambiguidade e referência não resolvida são `Error::Eval`. | `evaluate` | resolver na dobra; preferir contexto ao documento |
+| INV-33 | Candidato explícito que viola constraint é `Error::Fold`; default só é usado quando não há candidato. | `fold` | descartar candidato inválido em silêncio |
+| INV-34 | Erro semântico de `parse`/`evaluate` carrega linha e coluna do início da entrada. | parser, `evaluate` | emitir erro sem posição |
 
 ## Errors
 
@@ -193,7 +195,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `State::with::<T>` | fato já presente | sem erro; o estado devolvido é igual |
 | `State::union(other)` | qualquer estado | sem erro; união total |
 | `State::compact::<T>()` | fato de caminho desconhecido, fato de outro `SchemaId` | sem erro; o fato é preservado |
-| `fold::<T>(state, registry)` | candidato viola constraint e não há default | `Error::Fold` com caminho e razão |
+| `fold::<T>(state, registry)` | candidato explícito viola constraint | `Error::Fold` com caminho, esperado e encontrado |
 | `fold::<T>` | dois candidatos válidos incompatíveis | `Error::Conflict` com caminho e candidatos |
 | `fold::<T>` | campo obrigatório ausente sem default | `Error::Fold` com caminho |
 | `fold::<T>` | `SchemaId` diferente de `T::NAME` + `T::VERSION` | `Error::Schema` com esperado e encontrado |
@@ -410,13 +412,13 @@ pub trait NativeType: Sized {
 
 | Variant | Payload | Raised by |
 |---------|---------|-----------|
-| `Error::Path` | caminho, razão | parser, `State::with` |
-| `Error::Eval` | caminho, razão | `evaluate` |
+| `Error::Path` | caminho, razão, posição opcional | parser, `State::with` |
+| `Error::Eval` | caminho, razão, posição opcional | `evaluate` |
 | `Error::Parse` | linha, coluna, mensagem | parser |
 | `Error::Schema` | esperado `SchemaId`, encontrado `SchemaId` | `State::with`, `fold`, `resolve` |
 | `Error::Fold` | caminho, razão | `fold`, `resolve` |
 | `Error::Conflict` | caminho, candidatos | `fold`, `resolve` |
-| `Error::Native` | caminho, nome | parser, `fold`, `resolve` |
+| `Error::Native` | caminho, nome, nomes permitidos, posição opcional | parser, `fold`, `resolve` |
 | `Error::Build` | caminho, nome, fonte | `resolve` |
 | `Error::Materialize` | caminho, mensagem | `resolve` |
 
@@ -470,7 +472,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 
 `FoldPolicy` se aplica a folha e a listas sem campo-chave. `Node` de struct e de mapa é estrutural e não usa `policy`. Lista sem `key_field` é atômica e usa `Lww`; a atomicidade vem da estrutura, não de uma variante própria.
 
-Default de config é um fato `FactKind::Default`; default de schema é `Node.default`. A dobra usa candidato comum válido primeiro. Sem candidato comum válido, usa o default de config válido de maior `Stamp`. Sem default de config válido, usa `Node.default` se ele for válido. Entre defaults de config, a política do campo decide. Sem default válido e campo obrigatório, a dobra devolve `Error::Fold`. Campo `Option<T>` ausente é `None`, sem erro.
+Default de config é um fato `FactKind::Default`; default de schema é `Node.default`. A dobra usa candidato comum válido primeiro. Candidato explícito que viola constraint é `Error::Fold`, mesmo que exista default; a dobra não descarta a entrada explícita em silêncio. Sem candidato presente, usa o default de config de maior `Stamp`; default de config explícito que viola constraint também é `Error::Fold`. Sem default de config presente, usa `Node.default` se ele for válido; `Node.default` inválido e campo obrigatório devolvem `Error::Fold`. Campo `Option<T>` ausente é `None`, sem erro.
 
 Default natural é `*default | type`. O derive preenche `Node.default` via `NodeOf::default_value()`:
 
@@ -583,7 +585,7 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - [ ] O mesmo `State` e `Schema` produzem o mesmo `Value` serializado em duas execuções.
 - [ ] Dois candidatos `Lww` válidos com stamps diferentes: o de maior stamp vence.
 - [ ] Candidato que viola constraint nunca vence candidato válido.
-- [ ] Todos os candidatos inválidos com default: a dobra devolve o default. Sem default: `Error::Fold`.
+- [ ] Todos os candidatos explícitos inválidos: a dobra devolve `Error::Fold` com esperado e encontrado, mesmo com default. Sem candidato: a dobra usa o default.
 - [ ] `bool`, `Option<T>`, coleções e enum com `#[default]` preenchem campo ausente; `String` e números sem default devolvem `Error::Fold`.
 - [ ] `resolve` não chama `build` quando a dobra falha.
 - [ ] `parse` rejeita `servers.foo.name` quando `name` é campo-chave.
@@ -608,17 +610,17 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 10. Compactação incremental e backend de persistência.
 11. `kind` de enum como `Lww`.
 12. Segmentos de caminho Unicode.
-13. Canal de avisos para candidatos inválidos descartados.
-14. `no_std` e WASM.
-15. Trait público `Fold` para políticas customizadas.
-16. Aritmética, `&&`, `||` e funções na autoria avaliada.
+13. `no_std` e WASM.
+14. Trait público `Fold` para políticas customizadas.
+15. Aritmética, `&&`, `||` e funções na autoria avaliada.
+16. Posições de origem para erros de dobra.
 
 ## Assumptions
 
 | ID | Fact | If false |
 |----|------|----------|
 | AS-01 | O host fornece um relógio lógico que cresce a cada escrita no nó. | Stamps iguais podem produzir `Error::Conflict` em vez de ordem. |
-| AS-02 | O autor da config aceita que candidato inválido seja descartado em silêncio na dobra. | É necessário um canal de avisos antes da v1. |
+| AS-02 | Candidato explícito inválido é erro, não descarte silencioso. O default só vale sem candidato. | Candidato inválido é descartado em silêncio e a dobra perde o fail-closed. |
 | AS-03 | Todo `Vec<T>` tem campo-chave, ou o campo é anotado `#[colcha(atomic)]`. | O derive falha na compilação e o tipo precisa de anotação. |
 | AS-04 | O host controla o registro de nativos e mantém `NativeRegistry::spec` puro e estável. | A dobra deixa de ser determinística para o mesmo estado. |
 
@@ -639,3 +641,5 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0013: avaliador embutido na resolução. Rejeitados: avaliar na dobra; engine CUE completo; substituição textual de referências.
 - ADR-0014: listas são por chave ou atômicas. Rejeitados: concatenação por stamp; ordem de chegada como ordem da lista.
 - ADR-0015: parser único com modo concreto. Rejeitados: dois parsers sincronizados; `parse` com `Context` vazio.
+- ADR-0016: candidato explícito inválido é erro, não fallback. Rejeitados: descarte silencioso; aviso antes da v1.
+- ADR-0017: posição de origem em erros do parser e do avaliador. Rejeitados: `Error::At`; span em `Fact`.

@@ -26,9 +26,9 @@ O merge converge sempre (é total), mas o estado convergido pode violar um const
 
 ### 4. Regex "sempre perde"
 
-Um write que viola o constraint perde a disputa para qualquer candidato válido. Para isso convergir com constraint mutável, o estado guarda o **conjunto de candidatos**, e o vencedor é escolhido no `resolve` com o constraint final. Write inválido some em silêncio, então vale registrar um aviso. Se nenhum candidato passa, cai no default ou em erro no `resolve`.
+Um write que viola o constraint perde a disputa para qualquer candidato válido. Para isso convergir com constraint mutável, o estado guarda o **conjunto de candidatos**, e o vencedor é escolhido no `resolve` com o constraint final. Se nenhum candidato passa, o `resolve` devolve `Error::Fold`; o default só vale quando não há candidato (ADR-0016).
 
-**Regra única para um campo escalar (reconcilia as decisões 2, 3 e 4):** o estado guarda o conjunto de candidatos, e a dobra escolhe o de maior stamp entre os que satisfazem o constraint final. Um valor que viola o constraint não gera conflito, é só um candidato inválido que perde. Se nenhum candidato é válido, o `resolve` usa o default ou devolve erro. O register da decisão 2 é o caso particular com um candidato. Conflito (`Flat`) só existe entre dois valores concretos válidos sem stamp que os ordene.
+**Regra única para um campo escalar (reconcilia as decisões 2, 3 e 4):** o estado guarda o conjunto de candidatos, e a dobra escolhe o de maior stamp entre os que satisfazem o constraint final. Um valor que viola o constraint não gera conflito, é só um candidato inválido que perde. Se nenhum candidato é válido, o `resolve` devolve erro; o default só vale quando não há candidato. O register da decisão 2 é o caso particular com um candidato. Conflito (`Flat`) só existe entre dois valores concretos válidos sem stamp que os ordene.
 
 ### 5. Tipos nativos = nome de tipo + schema de argumentos
 

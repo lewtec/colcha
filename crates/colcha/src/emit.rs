@@ -72,7 +72,11 @@ impl<'a> Emitter<'a> {
                 return Err(Error::native(path.clone(), name));
             }
             if !node.natives.is_empty() && !node.natives.contains(name) {
-                return Err(Error::native(path.clone(), name));
+                return Err(Error::native_allowed(
+                    path.clone(),
+                    name,
+                    node.natives.iter().cloned(),
+                ));
             }
         }
         for value in expr.candidates {

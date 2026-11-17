@@ -467,9 +467,18 @@ fn a_comprehension_in_an_inactive_branch_is_not_evaluated() {
 
 #[test]
 fn an_unresolved_reference_is_an_evaluation_error() {
-    let error = evaluate::<Interpolated>(r#"label: missing"#, &Context::new(), stamp(1))
-        .expect_err("unresolved reference");
+    let error = evaluate::<Interpolated>(
+        r#"label: "x"
+first: missing"#,
+        &Context::new(),
+        stamp(1),
+    )
+    .expect_err("unresolved reference");
     assert!(matches!(error, Error::Eval { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains("reference 'missing'"), "{message}");
+    assert!(message.contains("does not resolve"), "{message}");
+    assert!(message.contains("(at 2:1)"), "{message}");
 }
 
 #[test]

@@ -190,7 +190,19 @@ impl Node {
                         Some(child) => node = child,
                         None => match node.rest_element() {
                             Some(element) => node = element,
-                            None => return Err(format!("unknown field '{segment}'")),
+                            None => {
+                                let suggestion = nearest_field_name(
+                                    segment,
+                                    node.fields.keys().map(String::as_str),
+                                );
+                                let reason = match suggestion {
+                                    Some(name) => {
+                                        format!("unknown field '{segment}'; did you mean '{name}'?")
+                                    }
+                                    None => format!("unknown field '{segment}'"),
+                                };
+                                return Err(reason);
+                            }
                         },
                     }
                     index += 1;
@@ -203,7 +215,7 @@ impl Node {
                             .ok_or_else(|| "list has no element schema".to_string())?;
                         index += 1;
                     } else {
-                        return Err("an atomic list has no child paths".to_string());
+                        return Err("the list is atomic and has no child paths".to_string());
                     }
                 }
                 NodeKind::Map => {
@@ -214,13 +226,19 @@ impl Node {
                     index += 1;
                 }
                 NodeKind::Leaf => {
-                    return Err(format!("'{segment}' is below a scalar leaf"));
+                    return Err(format!(
+                        "cannot descend into '{segment}': the parent is a scalar"
+                    ));
                 }
                 NodeKind::Raw => {
-                    return Err(format!("'{segment}' is below a raw leaf"));
+                    return Err(format!(
+                        "cannot descend into '{segment}': the parent is a raw value"
+                    ));
                 }
                 NodeKind::Union => {
-                    return Err(format!("'{segment}' is below a tagged union"));
+                    return Err(format!(
+                        "cannot descend into '{segment}': the parent is a tagged union"
+                    ));
                 }
                 NodeKind::Native => {
                     // Native argument paths are validated when the registry is known.
@@ -284,6 +302,26 @@ impl Constraint {
                 Value::String(name) => names.iter().any(|allowed| allowed == name),
                 _ => false,
             }),
+        }
+    }
+
+    /// Human-readable form used in fold diagnostics.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Constraint::Type(name) => name.clone(),
+            Constraint::Min(bound) => format!(">= {}", bound.describe()),
+            Constraint::Max(bound) => format!("<= {}", bound.describe()),
+            Constraint::Greater(bound) => format!("> {}", bound.describe()),
+            Constraint::Less(bound) => format!("< {}", bound.describe()),
+            Constraint::Regex(pattern) => format!("matching /{pattern}/"),
+            Constraint::MinLen(minimum) => format!("length >= {minimum}"),
+            Constraint::OneOf(values) => {
+                let values: Vec<String> = values.iter().map(Value::describe).collect();
+                format!("one of [{}]", values.join(", "))
+            }
+            Constraint::NativeOneOf(names) => {
+                format!("one of native names [{}]", names.join(", "))
+            }
         }
     }
 
@@ -434,7 +472,11 @@ fn bound_conflict(left: &Constraint, right: &Constraint) -> Option<String> {
         };
         match Value::compare_scalar(low, high) {
             Some(std::cmp::Ordering::Greater) => {
-                return Some(format!("lower bound {low:?} is above upper bound {high:?}"));
+                return Some(format!(
+                    "lower bound {} is above upper bound {}",
+                    low.describe(),
+                    high.describe()
+                ));
             }
             Some(std::cmp::Ordering::Equal) if !low_inclusive || !high_inclusive => {
                 return Some("the bounds meet without an allowed value".to_string());
@@ -463,6 +505,40 @@ fn types_compatible(left: &str, right: &str) -> bool {
         return true;
     }
     matches!((left, right), ("int", "float") | ("float", "int"))
+}
+
+pub(crate) fn nearest_field_name<'a>(
+    unknown: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let mut best: Option<(&str, usize)> = None;
+    for candidate in candidates {
+        let distance = edit_distance(unknown, candidate);
+        if best.is_none_or(|(_, best_distance)| distance < best_distance) {
+            best = Some((candidate, distance));
+        }
+    }
+    best.filter(|(_, distance)| *distance <= 2)
+        .map(|(name, _)| name)
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_character) in left.iter().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_character) in right.iter().enumerate() {
+            let substitution =
+                previous[right_index] + usize::from(left_character != right_character);
+            current[right_index + 1] = substitution
+                .min(previous[right_index + 1] + 1)
+                .min(current[right_index] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }
 
 /// Host-provided native type description.

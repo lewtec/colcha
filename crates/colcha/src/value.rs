@@ -55,6 +55,13 @@ pub enum Value {
     Native { name: String, args: Box<Value> },
 }
 
+fn is_bare_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+}
+
 impl Value {
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -126,6 +133,36 @@ impl Value {
             (Value::Float(a), Value::Int(b)) => a.get().partial_cmp(&(*b as f64)),
             (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
             _ => None,
+        }
+    }
+
+    /// Compact, config-like rendering used in diagnostics.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Value::Null => "null".to_string(),
+            Value::Bool(value) => value.to_string(),
+            Value::Int(value) => value.to_string(),
+            Value::Float(value) => format!("{:?}", value.get()),
+            Value::String(value) => format!("{value:?}"),
+            Value::List(values) => {
+                let items: Vec<String> = values.iter().map(Value::describe).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Map(values) => {
+                let items: Vec<String> = values
+                    .iter()
+                    .map(|(key, value)| {
+                        let key = if is_bare_key(key) {
+                            key.clone()
+                        } else {
+                            format!("{key:?}")
+                        };
+                        format!("{key}: {}", value.describe())
+                    })
+                    .collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            Value::Native { name, args } => format!("_core.{name} {}", args.describe()),
         }
     }
 

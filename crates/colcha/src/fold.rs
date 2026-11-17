@@ -55,15 +55,11 @@ fn fold_node(
             return Ok(node.default.clone().unwrap_or(Value::Null));
         }
         match node.kind {
-            NodeKind::Leaf | NodeKind::Raw | NodeKind::Union | NodeKind::Native => {}
-            NodeKind::Struct => {
-                if node.default.is_none() {
-                    return Err(Error::fold(
-                        path.clone(),
-                        "required field has no facts and no default",
-                    ));
-                }
-            }
+            NodeKind::Leaf
+            | NodeKind::Raw
+            | NodeKind::Union
+            | NodeKind::Native
+            | NodeKind::Struct => {}
             NodeKind::Map | NodeKind::List => {
                 if let Some(default) = &node.default {
                     ensure_constraints(node, path, default)?;
@@ -72,10 +68,7 @@ fn fold_node(
                 if matches!(node.kind, NodeKind::Map)
                     || (node.kind == NodeKind::List && node.key_field.is_some())
                 {
-                    return Err(Error::fold(
-                        path.clone(),
-                        "required field has no facts and no default",
-                    ));
+                    return Err(Error::fold(path.clone(), required_missing_reason()));
                 }
             }
         }
@@ -113,25 +106,48 @@ fn fold_union(node: &Node, path: &Path, facts: &[Fact]) -> Result<Value, Error> 
         }
     }
 
-    let mut selected = select(node.policy, &candidates, &constraints, path)?;
-    if selected.is_none() {
-        selected = select(node.policy, &defaults, &constraints, path)?;
-    }
-    if selected.is_none() {
-        if let Some(default) = &node.default {
-            if satisfies(default, &constraints, path)? {
-                selected = Some(default.clone());
+    let selected = if !candidates.is_empty() {
+        match select(node.policy, &candidates, &constraints, path)? {
+            Some(value) => Some(value),
+            None => {
+                return Err(Error::fold(
+                    path.clone(),
+                    invalid_entries_reason("candidate", &candidates, &constraints),
+                ));
             }
         }
-    }
+    } else if !defaults.is_empty() {
+        match select(node.policy, &defaults, &constraints, path)? {
+            Some(value) => Some(value),
+            None => {
+                return Err(Error::fold(
+                    path.clone(),
+                    invalid_entries_reason("configured default", &defaults, &constraints),
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    let selected = match selected {
+        Some(value) => Some(value),
+        None => match &node.default {
+            Some(default) if satisfies(default, &constraints, path)? => Some(default.clone()),
+            Some(default) => {
+                return Err(Error::fold(
+                    path.clone(),
+                    invalid_value_reason("schema default", default, &constraints),
+                ));
+            }
+            None => None,
+        },
+    };
 
     match selected {
         Some(value) => complete_union(node, path, Some(&value)),
         None if node.optional => Ok(Value::Null),
-        None => Err(Error::fold(
-            path.clone(),
-            "no valid variant and no valid default",
-        )),
+        None => Err(Error::fold(path.clone(), required_missing_reason())),
     }
 }
 
@@ -246,10 +262,13 @@ fn complete_struct(
     }
     for field in map.keys() {
         if node.rest.is_none() && !node.fields.contains_key(field) {
-            return Err(Error::fold(
-                path.clone(),
-                format!("unknown field '{field}'"),
-            ));
+            let suggestion =
+                crate::schema::nearest_field_name(field, node.fields.keys().map(String::as_str));
+            let reason = match suggestion {
+                Some(name) => format!("unknown field '{field}'; did you mean '{name}'?"),
+                None => format!("unknown field '{field}'"),
+            };
+            return Err(Error::fold(path.clone(), reason));
         }
     }
     Ok(Value::Map(result))
@@ -261,20 +280,10 @@ fn complete_leaf(node: &Node, path: &Path, value: Option<&Value>) -> Result<Valu
             if satisfies(value, &node.constraints, path)? {
                 value.clone()
             } else {
-                match &node.default {
-                    Some(default) if satisfies(default, &node.constraints, path)? => {
-                        default.clone()
-                    }
-                    _ => {
-                        return Err(Error::fold(
-                            path.clone(),
-                            format!(
-                                "value of type {} does not satisfy the field constraints",
-                                value.type_name()
-                            ),
-                        ));
-                    }
-                }
+                return Err(Error::fold(
+                    path.clone(),
+                    invalid_value_reason("value", value, &node.constraints),
+                ));
             }
         }
         Some(_) => {
@@ -299,7 +308,7 @@ fn complete_leaf(node: &Node, path: &Path, value: Option<&Value>) -> Result<Valu
     if !satisfies(&resolved, &node.constraints, path)? {
         return Err(Error::fold(
             path.clone(),
-            "default does not satisfy the field constraints",
+            invalid_value_reason("default", &resolved, &node.constraints),
         ));
     }
     Ok(resolved)
@@ -506,9 +515,12 @@ fn missing(node: &Node, path: &Path) -> Result<Value, Error> {
     if node.optional {
         return Ok(Value::Null);
     }
-    node.default
-        .clone()
-        .ok_or_else(|| Error::fold(path.clone(), "required field has no value"))
+    node.default.clone().ok_or_else(|| {
+        Error::fold(
+            path.clone(),
+            "required field is missing: no value and no schema default",
+        )
+    })
 }
 
 fn fold_struct(
@@ -658,6 +670,15 @@ fn fold_native(
         }
     }
 
+    let mut candidates: BTreeSet<String> = if node.natives.is_empty() {
+        allowed.clone()
+    } else {
+        node.natives.clone()
+    };
+    if !allowed.is_empty() && !candidates.is_empty() {
+        candidates = candidates.intersection(&allowed).cloned().collect();
+    }
+
     let name = if names.len() > 1 {
         return Err(Error::conflict(
             path.clone(),
@@ -669,16 +690,8 @@ fn fold_native(
     } else if let Some(name) = names.into_iter().next() {
         name
     } else {
-        let mut candidates: BTreeSet<String> = if node.natives.is_empty() {
-            allowed.clone()
-        } else {
-            node.natives.clone()
-        };
-        if !allowed.is_empty() {
-            candidates = candidates.intersection(&allowed).cloned().collect();
-        }
         match candidates.len() {
-            1 => candidates.into_iter().next().expect("one candidate"),
+            1 => candidates.iter().next().cloned().expect("one candidate"),
             0 => {
                 return Err(Error::native(path.clone(), "<unspecified>"));
             }
@@ -692,10 +705,18 @@ fn fold_native(
     };
 
     if !node.natives.is_empty() && !node.natives.contains(&name) {
-        return Err(Error::native(path.clone(), name));
+        return Err(Error::native_allowed(
+            path.clone(),
+            name,
+            candidates.iter().cloned(),
+        ));
     }
     if !allowed.is_empty() && !allowed.contains(&name) {
-        return Err(Error::native(path.clone(), name));
+        return Err(Error::native_allowed(
+            path.clone(),
+            name,
+            candidates.iter().cloned(),
+        ));
     }
 
     let spec = registry
@@ -783,24 +804,37 @@ fn fold_leaf(
     }
 
     let policy = forced_policy.unwrap_or(node.policy);
-    if let Some(value) = select(policy, &candidates, &constraints, path)? {
-        return Ok(value);
+    if !candidates.is_empty() {
+        return match select(policy, &candidates, &constraints, path)? {
+            Some(value) => Ok(value),
+            None => Err(Error::fold(
+                path.clone(),
+                invalid_entries_reason("candidate", &candidates, &constraints),
+            )),
+        };
     }
-    if let Some(value) = select(policy, &defaults, &constraints, path)? {
-        return Ok(value);
+    if !defaults.is_empty() {
+        return match select(policy, &defaults, &constraints, path)? {
+            Some(value) => Ok(value),
+            None => Err(Error::fold(
+                path.clone(),
+                invalid_entries_reason("configured default", &defaults, &constraints),
+            )),
+        };
     }
     if let Some(default) = &node.default {
         if satisfies(default, &constraints, path)? {
             return Ok(default.clone());
         }
+        return Err(Error::fold(
+            path.clone(),
+            invalid_value_reason("schema default", default, &constraints),
+        ));
     }
     if node.optional {
         return Ok(Value::Null);
     }
-    Err(Error::fold(
-        path.clone(),
-        "no valid candidate and no valid default",
-    ))
+    Err(Error::fold(path.clone(), required_missing_reason()))
 }
 
 fn select(
@@ -875,11 +909,55 @@ fn ensure_constraints(node: &Node, path: &Path, value: &Value) -> Result<(), Err
     }
     Err(Error::fold(
         path.clone(),
-        format!(
-            "a value of type {} does not satisfy the field constraints",
-            value.type_name()
-        ),
+        invalid_value_reason("value", value, &node.constraints),
     ))
+}
+
+fn describe_constraints(constraints: &[Constraint]) -> String {
+    if constraints.is_empty() {
+        return "no additional constraint".to_string();
+    }
+    constraints
+        .iter()
+        .map(Constraint::describe)
+        .collect::<Vec<String>>()
+        .join(" and ")
+}
+
+fn describe_values(entries: &[(Stamp, Value)]) -> String {
+    let mut seen = BTreeSet::new();
+    let mut rendered = Vec::new();
+    for (_, value) in entries {
+        if seen.insert(value) {
+            rendered.push(format!("{} ({})", value.describe(), value.type_name()));
+        }
+    }
+    rendered.join(", ")
+}
+
+fn invalid_entries_reason(
+    label: &str,
+    entries: &[(Stamp, Value)],
+    constraints: &[Constraint],
+) -> String {
+    format!(
+        "no {label} satisfies the field constraints: found {}; expected {}",
+        describe_values(entries),
+        describe_constraints(constraints)
+    )
+}
+
+fn invalid_value_reason(label: &str, value: &Value, constraints: &[Constraint]) -> String {
+    format!(
+        "{label} {} ({}) does not satisfy the field constraints: expected {}",
+        value.describe(),
+        value.type_name(),
+        describe_constraints(constraints)
+    )
+}
+
+fn required_missing_reason() -> String {
+    "required field is missing: no candidate, configured default, or schema default".to_string()
 }
 
 fn check_constraints(constraints: &[Constraint], path: &Path) -> Result<(), Error> {

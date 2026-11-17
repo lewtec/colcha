@@ -180,6 +180,18 @@ enum ConditionAst {
 #[derive(Clone, Debug)]
 struct Entry {
     kind: EntryKind,
+    line: usize,
+    column: usize,
+}
+
+impl Entry {
+    fn new(kind: EntryKind) -> Entry {
+        Entry {
+            kind,
+            line: 0,
+            column: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -275,19 +287,24 @@ impl<'a> Parser<'a> {
 
     fn parse_entry(&mut self, depth: usize) -> Result<Entry, Error> {
         self.skip_trivia();
-        if self.starts_with_ident("if") {
+        let line = self.line;
+        let column = self.column;
+        let mut entry = if self.starts_with_ident("if") {
             if self.concrete {
                 return Err(self.error("conditionals are not allowed in concrete input"));
             }
-            return self.parse_conditional(depth);
-        }
-        if self.starts_with_ident("for") {
+            self.parse_conditional(depth)?
+        } else if self.starts_with_ident("for") {
             if self.concrete {
                 return Err(self.error("comprehensions are not allowed in concrete input"));
             }
-            return self.parse_comprehension(depth);
-        }
-        self.parse_field(depth)
+            self.parse_comprehension(depth)?
+        } else {
+            self.parse_field(depth)?
+        };
+        entry.line = line;
+        entry.column = column;
+        Ok(entry)
     }
 
     fn parse_field(&mut self, depth: usize) -> Result<Entry, Error> {
@@ -295,19 +312,15 @@ impl<'a> Parser<'a> {
         self.skip_trivia();
         if self.eat_char(':') {
             let value = self.parse_field_value(depth)?;
-            return Ok(Entry {
-                kind: EntryKind::Field { segments, value },
-            });
+            return Ok(Entry::new(EntryKind::Field { segments, value }));
         }
         if self.eat_char('{') {
             let body = self.parse_entries(depth + 1)?;
             self.expect_char('}')?;
-            return Ok(Entry {
-                kind: EntryKind::Field {
-                    segments,
-                    value: FieldValue::Block(body),
-                },
-            });
+            return Ok(Entry::new(EntryKind::Field {
+                segments,
+                value: FieldValue::Block(body),
+            }));
         }
         Err(self.error("expected ':' or '{' after a field path"))
     }
@@ -359,6 +372,8 @@ impl<'a> Parser<'a> {
         };
         Ok(Some(Entry {
             kind: EntryKind::Field { segments, value },
+            line: snapshot.1,
+            column: snapshot.2,
         }))
     }
 
@@ -369,6 +384,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_conditional(&mut self, depth: usize) -> Result<Entry, Error> {
+        let line = self.line;
+        let column = self.column;
         self.consume_ident();
         let condition = self.parse_condition(depth)?;
         self.expect_char('{')?;
@@ -395,6 +412,8 @@ impl<'a> Parser<'a> {
                 then_entries,
                 else_entries,
             },
+            line,
+            column,
         })
     }
 
@@ -416,6 +435,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comprehension(&mut self, depth: usize) -> Result<Entry, Error> {
+        let line = self.line;
+        let column = self.column;
         self.consume_ident();
         let first = self.parse_ident_any()?;
         self.skip_trivia();
@@ -441,6 +462,8 @@ impl<'a> Parser<'a> {
                 source,
                 body,
             },
+            line,
+            column,
         })
     }
 
@@ -1000,6 +1023,8 @@ struct Decl {
     value: DeclValue,
     guards: Vec<Guard>,
     locals: Locals,
+    line: usize,
+    column: usize,
 }
 
 enum DeclValue {
@@ -1015,6 +1040,8 @@ struct Task {
     body: Vec<Entry>,
     guards: Vec<Guard>,
     locals: Locals,
+    line: usize,
+    column: usize,
 }
 
 struct Collector<'a> {
@@ -1050,95 +1077,114 @@ impl<'a> Collector<'a> {
     ) -> Result<(), Error> {
         let mut declared: BTreeSet<Path> = BTreeSet::new();
         for entry in entries {
-            match &entry.kind {
-                EntryKind::Field { segments, value } => {
-                    let path = build_path(base, segments, locals)?;
-                    if self.concrete && !declared.insert(path.clone()) {
-                        return Err(Error::path(
-                            path.to_string(),
-                            "field declared twice in the same block",
-                        ));
-                    }
-                    let node = self
-                        .root
-                        .lookup(&path)
-                        .map_err(|reason| Error::path(path.to_string(), reason))?;
-                    match value {
-                        FieldValue::Expr(ast) => self.decls.push(Decl {
+            self.collect_entry(base, entry, guards, locals, &mut declared)
+                .map_err(|error| error.at(entry.line, entry.column))?;
+        }
+        Ok(())
+    }
+
+    fn collect_entry(
+        &mut self,
+        base: &Path,
+        entry: &Entry,
+        guards: &[Guard],
+        locals: &Locals,
+        declared: &mut BTreeSet<Path>,
+    ) -> Result<(), Error> {
+        match &entry.kind {
+            EntryKind::Field { segments, value } => {
+                let path = build_path(base, segments, locals)?;
+                if self.concrete && !declared.insert(path.clone()) {
+                    return Err(Error::path(
+                        path.to_string(),
+                        "field declared twice in the same block",
+                    ));
+                }
+                let node = self
+                    .root
+                    .lookup(&path)
+                    .map_err(|reason| Error::path(path.to_string(), reason))?;
+                match value {
+                    FieldValue::Expr(ast) => self.decls.push(Decl {
+                        path,
+                        value: DeclValue::Expr(ast.clone()),
+                        guards: guards.to_vec(),
+                        locals: locals.clone(),
+                        line: entry.line,
+                        column: entry.column,
+                    }),
+                    FieldValue::Block(body) => match node.kind {
+                        NodeKind::Leaf => {
+                            return Err(Error::path(
+                                path.to_string(),
+                                "a scalar field expects a value",
+                            ));
+                        }
+                        NodeKind::Native => {
+                            return Err(Error::path(
+                                path.to_string(),
+                                "a native field expects a native value",
+                            ));
+                        }
+                        NodeKind::Raw | NodeKind::Union => self.decls.push(Decl {
                             path,
-                            value: DeclValue::Expr(ast.clone()),
+                            value: DeclValue::Block(body.clone()),
                             guards: guards.to_vec(),
                             locals: locals.clone(),
+                            line: entry.line,
+                            column: entry.column,
                         }),
-                        FieldValue::Block(body) => match node.kind {
-                            NodeKind::Leaf => {
-                                return Err(Error::path(
-                                    path.to_string(),
-                                    "a scalar field expects a value",
-                                ));
-                            }
-                            NodeKind::Native => {
-                                return Err(Error::path(
-                                    path.to_string(),
-                                    "a native field expects a native value",
-                                ));
-                            }
-                            NodeKind::Raw | NodeKind::Union => self.decls.push(Decl {
-                                path,
-                                value: DeclValue::Block(body.clone()),
-                                guards: guards.to_vec(),
-                                locals: locals.clone(),
-                            }),
-                            NodeKind::Struct | NodeKind::Map => {
-                                self.collect_block(&path, body, guards, locals)?;
-                            }
-                            NodeKind::List if node.key_field.is_some() => {
-                                self.collect_block(&path, body, guards, locals)?;
-                            }
-                            NodeKind::List => {
-                                return Err(Error::path(
-                                    path.to_string(),
-                                    "an atomic list expects a list value",
-                                ));
-                            }
-                        },
-                    }
+                        NodeKind::Struct | NodeKind::Map => {
+                            self.collect_block(&path, body, guards, locals)?;
+                        }
+                        NodeKind::List if node.key_field.is_some() => {
+                            self.collect_block(&path, body, guards, locals)?;
+                        }
+                        NodeKind::List => {
+                            return Err(Error::path(
+                                path.to_string(),
+                                "an atomic list expects a list value",
+                            ));
+                        }
+                    },
                 }
-                EntryKind::Conditional {
-                    condition,
-                    then_entries,
-                    else_entries,
-                } => {
-                    let mut then_guards = guards.to_vec();
-                    then_guards.push(Guard {
-                        condition: condition.clone(),
-                        locals: locals.clone(),
-                        positive: true,
-                    });
-                    self.collect_block(base, then_entries, &then_guards, locals)?;
-                    let mut else_guards = guards.to_vec();
-                    else_guards.push(Guard {
-                        condition: condition.clone(),
-                        locals: locals.clone(),
-                        positive: false,
-                    });
-                    self.collect_block(base, else_entries, &else_guards, locals)?;
-                }
-                EntryKind::Comprehension {
-                    key,
-                    value,
-                    source,
-                    body,
-                } => self.tasks.push(Task {
-                    base: base.clone(),
-                    key: key.clone(),
-                    value: value.clone(),
-                    source: source.clone(),
-                    body: body.clone(),
-                    guards: guards.to_vec(),
-                    locals: locals.clone(),
-                }),
             }
+            EntryKind::Conditional {
+                condition,
+                then_entries,
+                else_entries,
+            } => {
+                let mut then_guards = guards.to_vec();
+                then_guards.push(Guard {
+                    condition: condition.clone(),
+                    locals: locals.clone(),
+                    positive: true,
+                });
+                self.collect_block(base, then_entries, &then_guards, locals)?;
+                let mut else_guards = guards.to_vec();
+                else_guards.push(Guard {
+                    condition: condition.clone(),
+                    locals: locals.clone(),
+                    positive: false,
+                });
+                self.collect_block(base, else_entries, &else_guards, locals)?;
+            }
+            EntryKind::Comprehension {
+                key,
+                value,
+                source,
+                body,
+            } => self.tasks.push(Task {
+                base: base.clone(),
+                key: key.clone(),
+                value: value.clone(),
+                source: source.clone(),
+                body: body.clone(),
+                guards: guards.to_vec(),
+                locals: locals.clone(),
+                line: entry.line,
+                column: entry.column,
+            }),
         }
         Ok(())
     }
@@ -1149,9 +1195,11 @@ impl<'a> Collector<'a> {
             let mut deferred = Vec::new();
             for task in std::mem::take(&mut self.tasks) {
                 let status = {
-                    let resolver = Resolver::new(self.root, &self.decls, context);
+                    let resolver = Resolver::deferring(self.root, &self.decls, context);
                     let mut stack = Vec::new();
-                    resolver.guards_value(&task.guards, &task.base, &mut stack)?
+                    resolver
+                        .guards_value(&task.guards, &task.base, &mut stack)
+                        .map_err(|error| error.at(task.line, task.column))?
                 };
                 match status {
                     Some(false) => {
@@ -1165,23 +1213,29 @@ impl<'a> Collector<'a> {
                     Some(true) => {}
                 }
                 let source = {
-                    let resolver = Resolver::new(self.root, &self.decls, context);
+                    let resolver = Resolver::deferring(self.root, &self.decls, context);
                     let mut stack = Vec::new();
-                    resolver.value(&task.source, &task.locals, &task.base, &mut stack)?
+                    resolver
+                        .value(&task.source, &task.locals, &task.base, &mut stack)
+                        .map_err(|error| error.at(task.line, task.column))?
                 };
                 let Some(source) = source else {
                     deferred.push(task);
                     continue;
                 };
                 progress = true;
-                self.expand_task(task, source)?;
+                let line = task.line;
+                let column = task.column;
+                self.expand_task(task, source)
+                    .map_err(|error| error.at(line, column))?;
             }
             if !progress {
                 let task = deferred.first().expect("a task is pending");
                 return Err(Error::eval(
                     task.base.to_string(),
                     "comprehension guard or source does not resolve to a concrete value",
-                ));
+                )
+                .at(task.line, task.column));
             }
             self.tasks = deferred;
         }
@@ -1236,14 +1290,17 @@ impl<'a> Collector<'a> {
         for decl in &self.decls {
             let resolver = Resolver::new(self.root, &self.decls, context);
             let mut stack = Vec::new();
-            if !resolver.active(decl, &mut stack)? {
+            if !resolver
+                .active(decl, &mut stack)
+                .map_err(|error| error.at(decl.line, decl.column))?
+            {
                 continue;
             }
             if active.insert(decl.path.clone(), decl).is_some() {
-                return Err(Error::eval(
-                    decl.path.to_string(),
-                    "field is declared more than once",
-                ));
+                return Err(
+                    Error::eval(decl.path.to_string(), "field is declared more than once")
+                        .at(decl.line, decl.column),
+                );
             }
         }
 
@@ -1260,18 +1317,21 @@ impl<'a> Collector<'a> {
         context: &Context,
         decl: &Decl,
     ) -> Result<(), Error> {
-        let resolver = Resolver::new(root, decls, context);
-        let mut stack = Vec::new();
-        let expr = resolver.expr_for(decl, &mut stack)?.ok_or_else(|| {
-            Error::eval(
-                decl.path.to_string(),
-                "expression does not resolve to a concrete value",
-            )
-        })?;
-        let node = root
-            .lookup(&decl.path)
-            .map_err(|reason| Error::path(decl.path.to_string(), reason))?;
-        emitter.emit_expr(&decl.path, node, expr)
+        let result = (|| {
+            let resolver = Resolver::new(root, decls, context);
+            let mut stack = Vec::new();
+            let expr = resolver.expr_for(decl, &mut stack)?.ok_or_else(|| {
+                Error::eval(
+                    decl.path.to_string(),
+                    "expression does not resolve to a concrete value",
+                )
+            })?;
+            let node = root
+                .lookup(&decl.path)
+                .map_err(|reason| Error::path(decl.path.to_string(), reason))?;
+            emitter.emit_expr(&decl.path, node, expr)
+        })();
+        result.map_err(|error| error.at(decl.line, decl.column))
     }
 }
 
@@ -1316,6 +1376,9 @@ struct Resolver<'a> {
     root: &'a Node,
     decls: &'a [Decl],
     context: &'a Context,
+    /// During comprehension expansion a missing reference can mean "not
+    /// produced yet", so the caller defers instead of failing.
+    allow_missing: bool,
 }
 
 impl<'a> Resolver<'a> {
@@ -1324,6 +1387,14 @@ impl<'a> Resolver<'a> {
             root,
             decls,
             context,
+            allow_missing: false,
+        }
+    }
+
+    fn deferring(root: &'a Node, decls: &'a [Decl], context: &'a Context) -> Resolver<'a> {
+        Resolver {
+            allow_missing: true,
+            ..Resolver::new(root, decls, context)
         }
     }
 
@@ -1618,7 +1689,15 @@ impl<'a> Resolver<'a> {
                                 Error::eval(site.to_string(), error.to_string())
                             })?;
                             let Some(value) = self.resolve_path(&path, locals, stack)? else {
-                                return Ok(None);
+                                if self.allow_missing {
+                                    return Ok(None);
+                                }
+                                return Err(Error::eval(
+                                    site.to_string(),
+                                    format!(
+                                        "reference '{path}' in interpolation does not resolve to a value"
+                                    ),
+                                ));
                             };
                             output.push_str(&scalar_text(&value, site)?);
                         }
@@ -1649,7 +1728,14 @@ impl<'a> Resolver<'a> {
             ValueAst::Reference(reference) => {
                 let path = Path::from_segments(reference.clone())
                     .map_err(|error| Error::eval(site.to_string(), error.to_string()))?;
-                self.resolve_path(&path, locals, stack)
+                match self.resolve_path(&path, locals, stack)? {
+                    Some(value) => Ok(Some(value)),
+                    None if self.allow_missing => Ok(None),
+                    None => Err(Error::eval(
+                        site.to_string(),
+                        format!("reference '{path}' does not resolve to a value"),
+                    )),
+                }
             }
         }
     }

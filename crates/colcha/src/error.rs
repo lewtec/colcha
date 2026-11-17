@@ -6,9 +6,17 @@ use crate::value::Value;
 #[derive(Debug)]
 pub enum Error {
     /// A path is malformed or unknown for the schema.
-    Path { path: String, reason: String },
+    Path {
+        path: String,
+        reason: String,
+        position: Option<(usize, usize)>,
+    },
     /// Authored expressions could not be resolved to concrete facts.
-    Eval { path: String, reason: String },
+    Eval {
+        path: String,
+        reason: String,
+        position: Option<(usize, usize)>,
+    },
     /// The DSL text is not well formed.
     Parse {
         line: usize,
@@ -22,7 +30,12 @@ pub enum Error {
     /// Two valid candidates disagree under a policy that requires agreement.
     Conflict { path: Path, candidates: Vec<Value> },
     /// A native name is missing or not allowed at a path.
-    Native { path: Path, name: String },
+    Native {
+        path: Path,
+        name: String,
+        allowed: Vec<String>,
+        position: Option<(usize, usize)>,
+    },
     /// The host failed to build a native value during `resolve`.
     Build {
         path: Path,
@@ -38,6 +51,7 @@ impl Error {
         Error::Path {
             path: path.into(),
             reason: reason.into(),
+            position: None,
         }
     }
 
@@ -53,6 +67,43 @@ impl Error {
         Error::Eval {
             path: path.into(),
             reason: reason.into(),
+            position: None,
+        }
+    }
+
+    /// Attach the source position of the outermost authored entry.
+    pub(crate) fn at(self, line: usize, column: usize) -> Error {
+        match self {
+            Error::Path {
+                path,
+                reason,
+                position: None,
+            } => Error::Path {
+                path,
+                reason,
+                position: Some((line, column)),
+            },
+            Error::Eval {
+                path,
+                reason,
+                position: None,
+            } => Error::Eval {
+                path,
+                reason,
+                position: Some((line, column)),
+            },
+            Error::Native {
+                path,
+                name,
+                allowed,
+                position: None,
+            } => Error::Native {
+                path,
+                name,
+                allowed,
+                position: Some((line, column)),
+            },
+            other => other,
         }
     }
 
@@ -71,6 +122,21 @@ impl Error {
         Error::Native {
             path,
             name: name.into(),
+            allowed: Vec::new(),
+            position: None,
+        }
+    }
+
+    pub(crate) fn native_allowed(
+        path: Path,
+        name: impl Into<String>,
+        allowed: impl IntoIterator<Item = String>,
+    ) -> Error {
+        Error::Native {
+            path,
+            name: name.into(),
+            allowed: allowed.into_iter().collect(),
+            position: None,
         }
     }
 
@@ -85,8 +151,24 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Path { path, reason } => write!(f, "invalid path {path}: {reason}"),
-            Error::Eval { path, reason } => write!(f, "evaluation failed at {path}: {reason}"),
+            Error::Path {
+                path,
+                reason,
+                position,
+            } => {
+                write!(f, "cannot use path {path}: {reason}")?;
+                write_position(f, position)?;
+                Ok(())
+            }
+            Error::Eval {
+                path,
+                reason,
+                position,
+            } => {
+                write!(f, "evaluation failed at {path}: {reason}")?;
+                write_position(f, position)?;
+                Ok(())
+            }
             Error::Parse {
                 line,
                 column,
@@ -97,9 +179,32 @@ impl std::fmt::Display for Error {
             }
             Error::Fold { path, reason } => write!(f, "fold failed at {path}: {reason}"),
             Error::Conflict { path, candidates } => {
-                write!(f, "conflict at {path}: {candidates:?}")
+                write!(f, "conflict at {path}: ")?;
+                for (index, candidate) in candidates.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " vs ")?;
+                    }
+                    write!(f, "{}", candidate.describe())?;
+                }
+                Ok(())
             }
-            Error::Native { path, name } => write!(f, "native {name} is not usable at {path}"),
+            Error::Native {
+                path,
+                name,
+                allowed,
+                position,
+            } => {
+                if name == "<unspecified>" {
+                    write!(f, "no native name is allowed at {path}")?;
+                } else {
+                    write!(f, "native '{name}' is not usable at {path}")?;
+                }
+                if !allowed.is_empty() {
+                    write!(f, "; allowed names: {}", allowed.join(", "))?;
+                }
+                write_position(f, position)?;
+                Ok(())
+            }
             Error::Build { path, name, source } => {
                 write!(f, "build of native {name} failed at {path}: {source}")
             }
@@ -108,6 +213,16 @@ impl std::fmt::Display for Error {
             }
         }
     }
+}
+
+fn write_position(
+    f: &mut std::fmt::Formatter<'_>,
+    position: &Option<(usize, usize)>,
+) -> std::fmt::Result {
+    if let Some((line, column)) = position {
+        write!(f, " (at {line}:{column})")?;
+    }
+    Ok(())
 }
 
 impl std::error::Error for Error {
