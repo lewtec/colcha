@@ -41,9 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         threshold: 42.0 & <=100
     "#;
 
-    let state = parse::<Alert>(source, stamp)?
-        .into_iter()
-        .try_fold(State::empty(), |state, fact| state.with::<Alert>(fact))?;
+    let state = State::try_from_iter::<Alert>(parse::<Alert>(source, stamp)?)?;
 
     let alert = resolve::<Alert>(&state, &colcha::EmptyHost)?;
     assert_eq!(alert.threshold, 42.0);
@@ -167,9 +165,11 @@ let context = Context::new()
         colcha::Value::Map([("a".into(), colcha::Value::String("one".into()))].into()),
     )?;
 
-let state = evaluate::<Config>(source, &context, Stamp::new(1, NodeId::from_u128(1)))?
-    .into_iter()
-    .try_fold(State::empty(), |state, fact| state.with::<Config>(fact))?;
+let state = State::try_from_iter::<Config>(evaluate::<Config>(
+    source,
+    &context,
+    Stamp::new(1, NodeId::from_u128(1)),
+)?)?;
 let config = resolve::<Config>(&state, &EmptyHost)?;
 ```
 

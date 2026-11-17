@@ -684,7 +684,6 @@ fn field_node(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
         statements.push(quote!(node.policy = ::colcha::FoldPolicy::Flat;));
     }
     if attrs.atomic {
-        statements.push(quote!(node.policy = ::colcha::FoldPolicy::Atomic;));
         statements.push(quote!(node.key_field = None;));
         statements.push(quote!(node.kind = ::colcha::NodeKind::List;));
     }

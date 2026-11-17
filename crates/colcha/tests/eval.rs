@@ -14,11 +14,8 @@ fn state_of<T: Schema>(source: &str, clock: u64) -> State {
 }
 
 fn state_with_context<T: Schema>(source: &str, context: &Context, clock: u64) -> State {
-    evaluate::<T>(source, context, stamp(clock))
-        .expect("evaluate")
-        .into_iter()
-        .try_fold(State::empty(), |state, fact| state.with::<T>(fact))
-        .expect("state")
+    let facts = evaluate::<T>(source, context, stamp(clock)).expect("evaluate");
+    State::try_from_iter::<T>(facts).expect("state")
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]
@@ -562,7 +559,7 @@ fn authored_facts_are_concrete() {
         };
         assert!(!value.contains_native());
     }
-    let state: State = facts.into_iter().collect();
+    let state = State::try_from_iter::<Interpolated>(facts).expect("state");
     let value = fold::<Interpolated>(&state, &EmptyHost).expect("fold");
     assert_eq!(
         value.as_map().unwrap().get("label"),

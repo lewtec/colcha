@@ -9,7 +9,7 @@ Lista com append no fim não tem identidade estável. Dois nós que anexam ao me
 
 ## Decision
 
-O derive trata `Vec<T>` como mapa por chave. O elemento MUST ter um campo `#[colcha(key)]` do tipo `String`. A chave vira segmento de caminho e o campo-chave é derivado na materialização; escrita nesse caminho é `Error::Path`. `Vec<T>` anotado `#[colcha(atomic)]` é um valor único com `FoldPolicy::Atomic`. A saída por chave é ordenada pelo segmento.
+O derive trata `Vec<T>` como mapa por chave. O elemento MUST ter um campo `#[colcha(key)]` do tipo `String`. A chave vira segmento de caminho e o campo-chave é derivado na materialização; escrita nesse caminho é `Error::Path`. `Vec<T>` anotado `#[colcha(atomic)]` é um valor único com precedência `Lww`. A saída por chave é ordenada pelo segmento.
 
 ## Consequences
 

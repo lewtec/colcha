@@ -60,7 +60,10 @@ proptest! {
 
     #[test]
     fn union_is_commutative_and_associative(parts in parts_strategy()) {
-        let states: Vec<State> = parts.into_iter().map(State::from_iter).collect();
+        let states: Vec<State> = parts
+            .into_iter()
+            .map(|part| State::try_from_iter::<Sample>(part).expect("state"))
+            .collect();
         let mut forward = State::empty();
         for state in &states {
             forward = forward.union(state);
@@ -87,7 +90,7 @@ proptest! {
     fn compact_preserves_the_fold(parts in parts_strategy()) {
         let mut state = State::empty();
         for part in parts {
-            state = state.union(&State::from_iter(part));
+            state = state.union(&State::try_from_iter::<Sample>(part).expect("state"));
         }
         prop_assert_eq!(
             result_key(fold::<Sample>(&state, &EmptyHost)),

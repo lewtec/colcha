@@ -34,7 +34,6 @@ pub enum FoldPolicy {
     Lww,
     Flat,
     Union,
-    Atomic,
     Native,
 }
 
@@ -122,11 +121,7 @@ impl Node {
     pub fn list(element: Node, key_field: Option<String>) -> Node {
         Node {
             kind: NodeKind::List,
-            policy: if key_field.is_some() {
-                FoldPolicy::Lww
-            } else {
-                FoldPolicy::Atomic
-            },
+            policy: FoldPolicy::Lww,
             element: Some(Box::new(element)),
             key_field,
             ..Node::default()

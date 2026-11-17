@@ -130,7 +130,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `Constraint` | sim | valor; predicado | não | `Error::Fold` se o meet for vazio | afrouxar outra constraint |
 | `State` | sim | valor; `BTreeSet<Fact>` | não; `with`, `union` e `compact` devolvem novo | vazio é válido | editar o `BTreeSet` fora de `State` |
 | `Node` | sim | valor; schema derivado | não | `Error::Fold` se o schema for inválido | editar depois de publicado |
-| `FoldPolicy` | sim | valor (`Lww`, `Flat`, `Union`, `Atomic`, `Native`) | não | não tem nil | mudar entre chamadas |
+| `FoldPolicy` | sim | valor (`Lww`, `Flat`, `Union`, `Native`) | não | não tem nil | mudar entre chamadas |
 | `Native` | sim | valor; nome + `Node` de args + coerção | não | `Error::Native` se ausente | fazer I/O |
 | `NativeHandle` | sim | identidade opaca | não | `Error::Build` se o host falhar | assumir tipo concreto sem downcast |
 | `NativeRegistry` | sim | identidade do host | não | `Error::Native` | chamar `build` |
@@ -464,10 +464,9 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 | `Lww` | escalar comum, `Raw`, união tagueada, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
 | `Flat` | campo anotado `#[colcha(flat)]`, discriminante de enum | todos os candidatos válidos MUST ser iguais; qualquer diferença é `Error::Conflict` |
 | `Union` | `BTreeSet<T>`, `HashSet<T>` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
-| `Atomic` | `Vec<T>` anotado `#[colcha(atomic)]` | a lista inteira é um valor; vence o maior `Stamp`; empate com listas diferentes é `Error::Conflict` |
 | `Native` | campo nativo | escolhe um nome permitido; nomes diferentes são `Error::Conflict`; dobra os args contra `Native::args`, aplica `Native::coerce` e produz `Value::Native` |
 
-`FoldPolicy` se aplica a folha e a listas sem campo-chave. `Node` de struct e de mapa é estrutural e não usa `policy`.
+`FoldPolicy` se aplica a folha e a listas sem campo-chave. `Node` de struct e de mapa é estrutural e não usa `policy`. Lista sem `key_field` é atômica e usa `Lww`; a atomicidade vem da estrutura, não de uma variante própria.
 
 Default de config é um fato `FactKind::Default`; default de schema é `Node.default`. A dobra usa candidato comum válido primeiro. Sem candidato comum válido, usa o default de config válido de maior `Stamp`. Sem default de config válido, usa `Node.default` se ele for válido. Entre defaults de config, a política do campo decide. Sem default válido e campo obrigatório, a dobra devolve `Error::Fold`. Campo `Option<T>` ausente é `None`, sem erro.
 
@@ -497,7 +496,7 @@ Lista atômica é um único valor: vence o maior `Stamp` e empate com listas dif
 | Attribute | Applies to | Rule |
 |-----------|------------|------|
 | `#[colcha(key)]` | campo `String` de elemento de `Vec<T>` | identifica o campo-chave; a dobra preenche o valor na materialização; escrita no caminho é `Error::Path` |
-| `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
+| `#[colcha(atomic)]` | campo `Vec<T>` | lista atômica com precedência `Lww`; a lista inteira é um valor |
 | `#[colcha(min_len = N)]` | campo `Vec<T>` | adiciona `Constraint::MinLen(N)`, avaliado na lista dobrada |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |

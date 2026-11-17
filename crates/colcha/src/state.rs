@@ -149,20 +149,15 @@ impl State {
                 match &fact.kind {
                     FactKind::Constraint(_) => kept.push(fact),
                     FactKind::Candidate(value) | FactKind::Default(value) => {
-                        if !valid(value) {
-                            continue;
-                        }
-                        match node.policy {
-                            FoldPolicy::Lww | FoldPolicy::Atomic => kept.push(fact),
-                            FoldPolicy::Union => kept.push(fact),
-                            FoldPolicy::Flat | FoldPolicy::Native => kept.push(fact),
+                        if valid(value) {
+                            kept.push(fact);
                         }
                     }
                     FactKind::Tombstone => {}
                 }
             }
 
-            if matches!(node.policy, FoldPolicy::Lww | FoldPolicy::Atomic) {
+            if node.policy == FoldPolicy::Lww {
                 let max_candidate = kept
                     .iter()
                     .filter(|fact| matches!(fact.kind, FactKind::Candidate(_)))
@@ -204,12 +199,13 @@ impl State {
     pub fn is_empty(&self) -> bool {
         self.facts.is_empty()
     }
-}
 
-impl FromIterator<Fact> for State {
-    fn from_iter<T: IntoIterator<Item = Fact>>(iter: T) -> State {
-        State {
-            facts: iter.into_iter().collect(),
+    /// Build a state from facts, validating each one against `T` on the way in.
+    pub fn try_from_iter<T: Schema>(facts: impl IntoIterator<Item = Fact>) -> Result<State, Error> {
+        let mut state = State::empty();
+        for fact in facts {
+            state = state.with::<T>(fact)?;
         }
+        Ok(state)
     }
 }

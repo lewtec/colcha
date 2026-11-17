@@ -562,7 +562,7 @@ fn fold_list(
     registry: &dyn NativeRegistry,
 ) -> Result<Value, Error> {
     if node.key_field.is_none() {
-        return fold_leaf(node, path, facts, Some(FoldPolicy::Atomic));
+        return fold_leaf(node, path, facts, None);
     }
 
     let keys = direct_child_segments(facts, path);
@@ -820,7 +820,7 @@ fn select(
     }
 
     match policy {
-        FoldPolicy::Lww | FoldPolicy::Atomic | FoldPolicy::Native => {
+        FoldPolicy::Lww | FoldPolicy::Native => {
             let max_stamp = valid
                 .iter()
                 .map(|(stamp, _)| *stamp)

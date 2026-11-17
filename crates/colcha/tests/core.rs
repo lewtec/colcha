@@ -10,11 +10,8 @@ fn stamp(clock: u64) -> Stamp {
 }
 
 fn state_of<T: Schema>(source: &str, clock: u64) -> State {
-    parse::<T>(source, stamp(clock))
-        .expect("parse")
-        .into_iter()
-        .try_fold(State::empty(), |state, fact| state.with::<T>(fact))
-        .expect("state")
+    let facts = parse::<T>(source, stamp(clock)).expect("parse");
+    State::try_from_iter::<T>(facts).expect("state")
 }
 
 #[test]
@@ -216,16 +213,21 @@ fn unknown_fields_are_rejected() {
     assert!(matches!(error, Error::Path { .. }), "{error:?}");
 }
 
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Other {
+    name: String,
+}
+
 #[test]
 fn fold_rejects_a_foreign_schema() {
     let state = state_of::<Service>(r#"name: "x""#, 1);
     let fact = colcha::Fact::candidate(
         colcha::Path::parse("name").unwrap(),
         stamp(2),
-        colcha::SchemaId::new("other::Type", 1),
+        colcha::SchemaId::new(Other::NAME, Other::VERSION),
         Value::String("y".into()),
     );
-    let foreign = State::from_iter([fact]);
+    let foreign = State::try_from_iter::<Other>([fact]).expect("state");
     let error = fold::<Service>(&state.union(&foreign), &EmptyHost).expect_err("schema");
     assert!(matches!(error, Error::Schema { .. }), "{error:?}");
 }
