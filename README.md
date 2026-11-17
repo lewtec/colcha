@@ -131,6 +131,16 @@ Config {
 
 Defaults, constraints and candidates stay in the state. A candidate that violates a constraint loses without causing a conflict. Without a valid candidate, the fold uses the config default, then the schema default, then `Error::Fold`.
 
+## Resolution
+
+References, conditionals, comprehensions, interpolation and module schemas are in scope, but they do not live in the fact algebra. Resolution turns authored config into concrete facts before the state:
+
+```text
+authoring -> resolution -> facts -> State -> fold -> Materialize
+```
+
+`fold` and `Materialize` never see a reference or a comprehension. In v1 the host, or the CUE evaluator of modot, performs resolution and hands the crate a `Vec<Fact>`. A built-in evaluator would plug in before `State` and leave the algebra unchanged.
+
 ## Defaults
 
 Each type answers one question: does it have a natural default? If yes, the field opens as `*default | type` and absence stays valid. If no, the field must be present.

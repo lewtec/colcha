@@ -39,17 +39,19 @@ The fixtures use small copies of modules from the real dotfiles.
 Status meanings: `yes` means colcha covers the feature.
 `partial` means colcha covers a narrower or different form.
 `no` means colcha has no equivalent.
+`yes (resolution stage)` means the authoring layer resolves the feature before
+`State`; the crate receives concrete facts. See ADR-0012.
 
 | Feature | Fixture | Evidence | colcha today |
 |---------|---------|----------|--------------|
-| Module resolution | configdash, base16-gtk, webapp | `modules.<name>.input = "self:modules/..."` | no |
-| Module root fields | configdash | `dashboard_demo` appears at the top level | no |
-| External module source | schema | `modules.old.from = "core:place"` | no |
-| Schema and config unification | configdash | `options.theme.accent` merges type and value | partial |
-| Cross-field references | configdash, base16-gtk, webapp | `values.accent: options.theme.accent` | no |
+| Module resolution | configdash, base16-gtk, webapp | `modules.<name>.input = "self:modules/..."` | yes (resolution stage) |
+| Module root fields | configdash | `dashboard_demo` appears at the top level | yes (resolution stage) |
+| External module source | schema | `modules.old.from = "core:place"` | yes (resolution stage) |
+| Schema and config unification | configdash | `options.theme.accent` merges type and value | yes (resolution stage) |
+| Cross-field references | configdash, base16-gtk, webapp | `values.accent: options.theme.accent` | yes (resolution stage) |
 | Defaults | base16-gtk, webapp | `prefer_dark: 1`, `cursor_size: 24`, `browser: null` | yes |
 | Constraints | base16-gtk | `string & =~"^#[0-9a-fA-F]{6}$"` | partial |
-| Conditionals | base16-gtk | `if options.base16.mode == "dark" { ... }` | no |
+| Conditionals | base16-gtk | `if options.base16.mode == "dark" { ... }` | yes (resolution stage) |
 | Open structs | base16-gtk | `#gtkSettingsShared` ends with `...` | yes (`#[colcha(rest)]`) |
 | Optional fields and maps | webapp | `apps?: [string]: {...}`, `profile?` | partial |
 | Open lists | webapp | `extra_flags: [...string]` | partial |
@@ -58,7 +60,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Heterogeneous values | base16-gtk, schema | `values` mixes strings, ints, and nested maps | yes (`Raw`) |
 | Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | yes (`#[colcha(tag)]`) |
 | Lists of structs | schema | `backup.actions` keeps input order | yes (`#[colcha(concat)]`) |
-| Comprehensions | schema | `core:place` expands `items` into `file.home` | no |
+| Comprehensions | schema | `core:place` expands `items` into `file.home` | yes (resolution stage) |
 | Struct defaults | schema | `lint.tools.00-go.enable = true` comes from the schema | yes |
 | Null values | webapp | `whatsapp.browser = null` | partial |
 
@@ -70,4 +72,4 @@ The corpus also pins behaviour that colcha does not model yet:
 - `Vec<T>` is keyed by default, so input order is lost; `#[colcha(concat)]` keeps order but cannot retract one item.
 - Tagged unions accept named variants only; scalar variants use `Raw`.
 - Open structs need an explicit `#[colcha(rest)]` field; a definition that ends in `...` has no direct equivalent.
-- References, comprehensions, and conditional fields have no syntax.
+- References, comprehensions, conditionals, interpolation and module schemas resolve before `State`; the crate itself has no syntax for them. See ADR-0012.

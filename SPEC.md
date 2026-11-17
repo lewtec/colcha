@@ -24,7 +24,11 @@ Non-goals:
 5. CLI na v1.
 6. Entrada JSON, TOML e YAML na v1; serde fica na materialização de saída.
 7. Tipos nativos declarados pela DSL.
-8. Mini-linguagem de expressão para despacho na config.
+8. Mini-linguagem de expressão para despacho na config; referências e comprehensions ficam na resolução.
+
+Referências, condicionais, comprehensions, interpolação e schema por módulo
+estão no escopo da resolução, que roda antes de `State`. Os não-objetivos acima
+valem para a DSL e para a álgebra de fatos.
 9. Migração de schema entre versões na v1.
 10. Gestão e redação de segredos.
 
@@ -100,6 +104,8 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | combinar estados | merge (`State::union`) | aplicar, sincronizar, resolver |
 | materializar sem efeito | dobra (`fold`) | merge, eval, aplicar |
 | materializar com efeito | `resolve` | load, apply, build |
+| avaliar autoria em fatos | resolução | eval direto, interpretar na dobra |
+| autoria com referência ou comprehension | fonte de config | fato, valor dobrado |
 | valor concorrente | candidato | valor final, escrita |
 | remoção | tombstone | delete, remove, null |
 | disputa entre candidatos | conflito | erro de merge, ambiguidade |
@@ -167,6 +173,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-28 | Um nó com `rest` aceita chave desconhecida e a dobra no campo rest. | `lookup`, `fold` | gravar em `rest.x` |
 | INV-29 | `MinLen` é avaliado sobre a lista dobrada, inclusive default e lista por chave. | `fold`, `Constraint` | validar só candidato atômico |
 | INV-30 | `Concat` ordena por `(Stamp, Value)` e preserva duplicatas; fato não-lista é `Error::Fold`. | `fold` | ordenar por chegada; deduplicar itens |
+| INV-31 | A resolução emite só fatos concretos; `fold` e `Materialize` não interpretam autoria. | `State`, `fold` | resolver referência na dobra |
 
 ## Errors
 
@@ -211,6 +218,30 @@ impl State {
 ```
 
 `parse` usa `T::schema()`, `T::NAME` e `T::VERSION`. `fold` é a verificação pura. `resolve` executa `fold`, valida a identidade do schema e materializa; só `resolve` chama `NativeHost::build`.
+
+## Resolution phase
+
+Referências, condicionais, comprehensions, interpolação, defaults não literais e
+schema por módulo estão no escopo. Eles pertencem à fase de resolução, não à
+álgebra de fatos.
+
+O fluxo MUST ser:
+
+```text
+autoria -> resolução -> Vec<Fact> -> State -> fold -> Materialize
+```
+
+A resolução lê autoria, módulos e o schema efetivo. Ela emite `Fact` com `Value`
+concreto. `fold` e `Materialize` MUST NOT ver referência, comprehension,
+interpolação ou schema dinâmico. O `State` só contém fatos concretos.
+
+Schema por módulo também termina na resolução: ela reduz o schema efetivo ao
+schema do tipo Rust, representando o resto como `Raw`, e emite fatos com um
+`SchemaId` único.
+
+A v1 não embute o avaliador: o host ou o CUE do modot resolve a autoria e entrega
+os fatos. A crate expõe a álgebra. Um avaliador embutido entra antes de `State` e
+não muda `fold`, `State` nem `Materialize`.
 
 ### Core shapes
 
@@ -527,6 +558,7 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 13. Canal de avisos para candidatos inválidos descartados.
 14. `no_std` e WASM.
 15. Trait público `Fold` para políticas customizadas.
+16. Avaliador embutido de referências, condicionais e comprehensions antes de `State`.
 
 ## Assumptions
 
@@ -550,3 +582,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0009: uniões tagueadas em enums. Rejeitados: payload sem tag; tag adjacente; caminhos por variante; `serde` como formato.
 - ADR-0010: campo rest para structs abertas. Rejeitados: struct aberta implícita; ignorar chave desconhecida; aninhar extras no campo rest.
 - ADR-0011: listas concat. Rejeitados: união ordenada por item; lista CRDT com identidade de elemento; retração por item na v1.
+- ADR-0012: resolução antes da materialização. Rejeitados: referências como fatos; resolver durante a dobra; schema dinâmico dentro de `fold`.

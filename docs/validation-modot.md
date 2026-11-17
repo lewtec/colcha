@@ -3,7 +3,8 @@
 ## Status
 
 Experimental. O modelo cobre um subconjunto normalizado do config do modot.
-Ele não representa o config real sem extensões.
+Ele não representa o config real sem extensões. Referências, condicionais,
+comprehensions e schema por módulo são resolvidos antes dos fatos (ADR-0012).
 
 ## Método
 
@@ -22,6 +23,7 @@ Ele não representa o config real sem extensões.
 - O parser aceita segmento nu ou string entre aspas. A string pode conter `.`, `/`, `*` e maiúsculas.
 - `Path::Display` cita segmentos que não são palavras nuas e junta os segmentos com `.`.
 - O schema é estático e vem de `T::schema()`.
+- Autoria com referências, condicionais, comprehensions e schema por módulo resolve antes de `State`. A colcha recebe fatos concretos.
 - Structs derivadas são fechadas. Um campo `#[colcha(rest)]` aceita chaves desconhecidas.
 - Enums derivados são unitários por padrão. `#[colcha(tag = "...")]` produz uma união tagueada com variantes nomeadas.
 - `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica ou concat.
@@ -197,7 +199,7 @@ equivalentes; a diferença em relação ao CUE fica documentada aqui e no README
 Não há `Nullable<T>` na v1. Quem precisa rejeitar `null` usa `Raw` ou valida
 antes de inserir o fato.
 
-### P3: linguagem de avaliação
+### P3: linguagem de avaliação (em escopo, na resolução)
 
 O `modot.cue` usa recursos que não são fatos:
 
@@ -208,22 +210,25 @@ O `modot.cue` usa recursos que não são fatos:
 - defaults não literais.
 - módulos com schema carregado em runtime.
 
-A colcha não tem avaliação. O DSL é uma sintaxe de fatos com defaults e
-constraints.
+Esses recursos estão no escopo, mas pertencem à fase de resolução. Ela lê a
+autoria e emite `Fact` com `Value` concreto antes de `State`. `fold` e
+`Materialize` nunca veem uma referência ou comprehension.
 
-Isso não é lacuna se a colcha consumir config já avaliado. É bloqueante se a
-colcha substituir a autoria CUE.
+O fluxo é `autoria -> resolução -> Vec<Fact> -> State -> fold -> Materialize`.
+Na v1 a resolução é o CUE do modot ou o host; um avaliador embutido entra antes
+de `State` sem mudar a álgebra. Ver ADR-0012.
 
-### P3: schema dinâmico por módulo
+### P3: schema dinâmico por módulo (em escopo, na resolução)
 
 Cada módulo declara `options: {...}`. O modot unifica esses schemas em runtime.
 
-A colcha tem schema estático. `T::schema()` é fixo em tempo de compilação.
-`SchemaId` por fato e `fold::<T>` rejeita schema estrangeiro.
+A colcha tem schema estático por tipo Rust. A resolução reduz o schema efetivo
+ao schema do tipo, representa o resto como `Raw` ou campo rest e emite todos os
+fatos com um `SchemaId` único. `T::schema()` e `fold::<T>` continuam estáticos;
+`fold::<T>` rejeita schema estrangeiro.
 
-Direção: ou gerar um schema único para o workspace, ou montar o schema em
-runtime a partir dos módulos. A segunda opção muda a assinatura de `resolve` e o
-contrato de `SchemaId`.
+Um avaliador embutido pode montar o schema antes de `State`, mas o contrato de
+`SchemaId` não muda dentro da dobra.
 
 ## Prioridade
 
@@ -238,6 +243,9 @@ contrato de `SchemaId`.
    `actions`, `cmd` e `ips`.
 6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. A v1 mantém
    `Option<T>` para ausência e `null`; `Nullable` fica fora.
+7. Resolução de autoria (referências, condicionais, comprehensions,
+   interpolação e schema por módulo). Em escopo, antes de `State`. O CUE do
+   modot já faz isso; um avaliador embutido entra depois.
 
 ## Recomendação
 
@@ -245,12 +253,12 @@ Tratar a colcha como armazenamento de fatos normalizados, alimentado por um
 avaliador. O avaliador pode ser o CUE do modot ou outro. A colcha valida o
 subconjunto fechado e guarda o resto como `Raw`.
 
-Essa leitura é compatível com o SPEC atual: sem módulos na DSL, sem avaliação e
-com `fold` puro. Ela também evita reimplementar CUE.
+Essa leitura é compatível com o SPEC: sem módulos na DSL, com resolução antes do
+`State` e com `fold` puro. Referências, comprehensions e schema dinâmico estão
+no escopo, mas resolvem antes da materialização. Ver ADR-0012.
 
-Se a intenção for substituir a autoria CUE, o escopo cresce muito. Seria preciso
-avaliação, referências, comprehensions, interpolação e schema dinâmico. Essa
-decisão deve virar um ADR antes de qualquer implementação.
+O avaliador embutido é trabalho posterior. Ele não muda `fold`, `State` nem
+`Materialize`; só produz os fatos.
 
 ## Evidência
 
