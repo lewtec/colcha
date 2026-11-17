@@ -181,7 +181,7 @@ Resolução: `Constraint::MinLen(usize)` e `#[colcha(min_len = N)]` em campo
 também passam pela regra. Um fato `[]` no caminho de lista por chave é aceito e
 representa a lista vazia.
 
-### P2: ausente versus `null`
+### P2: ausente versus `null` (decisão: manter `Option<T>`)
 
 A colcha colapsa os dois.
 
@@ -192,9 +192,10 @@ A colcha colapsa os dois.
 O CUE distingue campo ausente (`?`) de `null`. Em `mac?: string`, `null` não é
 válido. Na colcha, `mac: null` vira `None` e passa.
 
-Direção: manter ausência como ausência de fato. `Option<T>` não deve aceitar
-`null` por padrão. Um wrapper `Nullable<T>` expressa `T | null`. A mudança mexe
-no fold e no materialize.
+Decisão da v1: manter o mapeamento de `Option<T>`. Ausência e `null` continuam
+equivalentes; a diferença em relação ao CUE fica documentada aqui e no README.
+Não há `Nullable<T>` na v1. Quem precisa rejeitar `null` usa `Raw` ou valida
+antes de inserir o fato.
 
 ### P3: linguagem de avaliação
 
@@ -235,8 +236,8 @@ contrato de `SchemaId`.
    e `options`.
 5. Política de lista explícita. Feito com `#[colcha(concat)]`. Desbloqueia
    `actions`, `cmd` e `ips`.
-6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. `Nullable`
-   segue aberto.
+6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. A v1 mantém
+   `Option<T>` para ausência e `null`; `Nullable` fica fora.
 
 ## Recomendação
 

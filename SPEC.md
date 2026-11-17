@@ -152,7 +152,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-13 | `resolve` e `fold` recusam `State` com `SchemaId` diferente de `T::NAME` + `T::VERSION`. | `resolve`, `fold` | dobrar schema desconhecido; ignorar identidade |
 | INV-14 | Tombstone no caminho P absorve fatos em P e abaixo de P com `stamp <= tombstone.stamp`. | `fold` | apagar só o nó exato; apagar fato mais novo |
 | INV-15 | Escrita em campo-chave é rejeitada na inserção; o valor do campo-chave é derivado do segmento. | `State`, `fold` | aceitar `servers/foo/name = "bar"` |
-| INV-16 | `Vec<T>` sem `#[colcha(atomic)]` exige campo `#[colcha(key)]`; o derive emite erro de compilação quando falta. | derive | escolher índice; escolher hash |
+| INV-16 | `Vec<T>` sem `atomic` ou `concat` exige `#[colcha(key)]`; sem ele o derive falha. | derive | escolher índice; escolher hash |
 | INV-17 | A saída de `Vec<T>` por chave é ordenada pelo segmento da chave. | `fold`, `Materialize` | ordem de inserção |
 | INV-18 | O parser limita entrada a 1 MiB e aninhamento a 32; acima disso devolve `Error::Parse`. | parser | alocar sem limite |
 | INV-19 | O discriminante de enum nativo é `Flat`: dois `kind` válidos diferentes produzem `Error::Conflict`. | `fold` | escolher o `kind` por stamp |
@@ -415,7 +415,7 @@ Lista `Concat` reúne os candidatos de lista no caminho. A ordem é por `(Stamp,
 | `#[colcha(key)]` | campo `String` de elemento de `Vec<T>` | identifica o campo-chave; a dobra preenche o valor na materialização; escrita no caminho é `Error::Path` |
 | `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
 | `#[colcha(min_len = N)]` | campo `Vec<T>` | adiciona `Constraint::MinLen(N)`, avaliado na lista dobrada |
-| `#[colcha(concat)]` | campo `Vec<T>` ou `Option<Vec<T>>` | usa `FoldPolicy::Concat`; concatena os fatos de lista por `(Stamp, Value)` |
+| `#[colcha(concat)]` | campo `Vec<T>` ou `Option<Vec<T>>` | `FoldPolicy::Concat`; ordena e concatena os fatos de lista |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
 | `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |
@@ -425,7 +425,7 @@ Lista `Concat` reúne os candidatos de lista no caminho. A ordem é por `(Stamp,
 | `#[colcha(tag = "...")]` | enum raiz | representa o enum como união tagueada |
 | `#[colcha(version = N)]` | struct ou enum raiz | define `Schema::VERSION`; o default é 1 |
 
-`Vec<T>` sem `#[colcha(atomic)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Um struct tem no máximo um campo `#[colcha(rest)]`. Atributo desconhecido é erro de compilação.
+`Vec<T>` sem `#[colcha(atomic)]` e sem `#[colcha(concat)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Um struct tem no máximo um campo `#[colcha(rest)]`. Atributo desconhecido é erro de compilação.
 
 ### Open structs
 
@@ -461,7 +461,7 @@ enum Action {
 
 No DSL, o valor é um objeto literal: `action: { kind: "start", service: "api" }`. A dobra lê o tag, escolhe a variante, preenche os defaults dos campos e rejeita campo desconhecido. O valor dobrado mantém o campo tag.
 
-`Option<E>` aceita `null`. `Vec<E>` precisa de `#[colcha(atomic)]`; a materialização aplica os defaults dos campos, porque a lista atômica não desce por caminho. `#[colcha(key)]` em campo de variante e um campo com o nome do tag são erros de compilação. Variante com campos posicionais é erro de compilação. Uma variante default só compõe default natural quando todos os campos têm default.
+`Option<E>` aceita `null`. `Vec<E>` precisa de `#[colcha(atomic)]` ou `#[colcha(concat)]`; a materialização aplica os defaults dos campos, porque a lista não desce por caminho. `#[colcha(key)]` em campo de variante e um campo com o nome do tag são erros de compilação. Variante com campos posicionais é erro de compilação. Uma variante default só compõe default natural quando todos os campos têm default.
 
 ### EXAMPLE: alerta de monitoramento
 
@@ -534,7 +534,7 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 |----|------|----------|
 | AS-01 | O host fornece um relógio lógico que cresce a cada escrita no nó. | Stamps iguais podem produzir `Error::Conflict` em vez de ordem. |
 | AS-02 | O autor da config aceita que candidato inválido seja descartado em silêncio na dobra. | É necessário um canal de avisos antes da v1. |
-| AS-03 | Todo `Vec<T>` tem campo-chave; o campo sem chave é anotado `#[colcha(atomic)]`. | O derive falha na compilação e o tipo precisa de anotação. |
+| AS-03 | Todo `Vec<T>` tem campo-chave, ou o campo é anotado `#[colcha(atomic)]` ou `#[colcha(concat)]`. | O derive falha na compilação e o tipo precisa de anotação. |
 | AS-04 | O host controla o registro de nativos e mantém `NativeRegistry::spec` puro e estável. | A dobra deixa de ser determinística para o mesmo estado. |
 
 ## Decision history

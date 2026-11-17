@@ -148,11 +148,13 @@ Each type answers one question: does it have a natural default? If yes, the fiel
 
 `String`, integers, `f32`, `f64` and native types have no natural default. A field of one of those types must be present. To accept absence, wrap the field in `Option<T>`. There is no `Required<T>`.
 
+`Option<T>` treats absence and an explicit `null` as the same value. CUE distinguishes the two; colcha does not, and v1 has no `Nullable<T>`.
+
 `#[colcha(default = <literal>)]` overrides the natural default. On an enum, `#[default]` comes from `#[derive(Default)]`; `#[colcha(default)]` marks the variant without deriving `Default`.
 
 ## Keyed collections
 
-`Vec<T>` behaves as a map keyed by one field. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment: `alert.foo` addresses element `foo`, and `alert."web.1"` addresses element `web.1`. Keys are case-sensitive; quote a segment that contains a dot, slash, or other punctuation. The fold derives the key field from that segment. The fold orders output by key.
+By default, `Vec<T>` behaves as a map keyed by one field. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment: `alert.foo` addresses element `foo`, and `alert."web.1"` addresses element `web.1`. Keys are case-sensitive; quote a segment that contains a dot, slash, or other punctuation. The fold derives the key field from that segment. The fold orders output by key.
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
@@ -207,7 +209,7 @@ enum Action {
 }
 ```
 
-The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]`.
+The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]` or `#[colcha(concat)]`.
 
 ## Open structs
 
