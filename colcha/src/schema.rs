@@ -46,6 +46,7 @@ pub enum NodeKind {
     Struct,
     List,
     Map,
+    Union,
     Native,
 }
 
@@ -60,6 +61,8 @@ pub struct Node {
     pub element: Option<Box<Node>>,
     pub key_field: Option<String>,
     pub natives: BTreeSet<String>,
+    pub tag: Option<String>,
+    pub variants: BTreeMap<String, Node>,
     pub optional: bool,
 }
 
@@ -74,6 +77,8 @@ impl Default for Node {
             element: None,
             key_field: None,
             natives: BTreeSet::new(),
+            tag: None,
+            variants: BTreeMap::new(),
             optional: false,
         }
     }
@@ -99,6 +104,15 @@ impl Node {
     pub fn raw() -> Node {
         Node {
             kind: NodeKind::Raw,
+            ..Node::default()
+        }
+    }
+
+    /// A tagged union of struct-like variants.
+    pub fn union(tag: impl Into<String>) -> Node {
+        Node {
+            kind: NodeKind::Union,
+            tag: Some(tag.into()),
             ..Node::default()
         }
     }
@@ -193,6 +207,9 @@ impl Node {
                 }
                 NodeKind::Raw => {
                     return Err(format!("'{segment}' is below a raw leaf"));
+                }
+                NodeKind::Union => {
+                    return Err(format!("'{segment}' is below a tagged union"));
                 }
                 NodeKind::Native => {
                     // Native argument paths are validated when the registry is known.

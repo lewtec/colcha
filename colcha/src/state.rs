@@ -117,7 +117,7 @@ impl State {
                 }
                 continue;
             };
-            if !matches!(node.kind, NodeKind::Leaf | NodeKind::Raw) {
+            if !matches!(node.kind, NodeKind::Leaf | NodeKind::Raw | NodeKind::Union) {
                 for fact in facts {
                     compacted.facts.insert(fact.clone());
                 }

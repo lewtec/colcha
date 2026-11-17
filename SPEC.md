@@ -162,6 +162,8 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-23 | `Float` rejeita NaN e ordena pelos bits; a ordem é total e determinística. | `Float` | usar `PartialOrd` de `f64` no `BTreeSet` |
 | INV-24 | `Path::Display` escreve uma forma que `Path::parse` reconstrói; segmentos fora da forma nua são citados com escapes JSON. | `Path` | escrever segmento ambíguo sem aspas |
 | INV-25 | Um nó `Raw` aceita qualquer `Value` concreto e não tem filhos; a materialização rejeita nativo. | `Raw`, `Node` | aceitar `raw.campo`; aceitar `Value::Native` em `Raw` |
+| INV-26 | `Union` lê o tag e escolhe a variante. | `fold`, `parse` | ignorar campo desconhecido |
+| INV-27 | O valor dobrado mantém o tag. | `Node` | aceitar `union.campo` |
 
 ## Errors
 
@@ -236,6 +238,8 @@ pub struct Node {
     pub element: Option<Box<Node>>,
     pub key_field: Option<String>,
     pub natives: BTreeSet<String>,
+    pub tag: Option<String>,
+    pub variants: BTreeMap<String, Node>,
     pub optional: bool,
 }
 
@@ -245,6 +249,7 @@ pub enum NodeKind {
     Struct,
     List,
     Map,
+    Union,
     Native,
 }
 
@@ -357,6 +362,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 - Um segmento é uma palavra nua ou uma string entre aspas. A string aceita qualquer caractere, incluindo `.`, `/`, `*` e maiúsculas.
 - Chaves são case-sensitive: `base0A` e `base0a` são segmentos diferentes.
 - Em campo `Raw`, `{ ... }` é um objeto literal e não um bloco de schema. O objeto aceita chaves e valores arbitrários.
+- Em campo `Union`, `{ ... }` é um objeto literal com o campo tag e os campos da variante.
 - `_core.Nome` fixa o tipo nativo do caminho. Em campo de tipo nativo único, o prefixo MAY ser omitido.
 - Lista de objetos em campo `Vec<T>` é normalizada para um caminho por campo-chave. Objeto em campo `Map<K,V>` usa a chave como segmento.
 
@@ -364,7 +370,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 
 | Policy | Used for | Rule |
 |--------|----------|------|
-| `Lww` | escalar comum, `Raw`, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
+| `Lww` | escalar comum, `Raw`, união tagueada, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
 | `Flat` | campo anotado `#[colcha(flat)]`, discriminante de enum | todos os candidatos válidos MUST ser iguais; qualquer diferença é `Error::Conflict` |
 | `Union` | `BTreeSet<T>`, `HashSet<T>` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
 | `Atomic` | `Vec<T>` anotado `#[colcha(atomic)]` | a lista inteira é um valor; vence o maior `Stamp`; empate com listas diferentes é `Error::Conflict` |
@@ -383,7 +389,8 @@ Default natural é `*default | type`. O derive preenche `Node.default` via `Node
 | `Vec<T>` | `[]` |
 | `BTreeSet<T>`, `HashSet<T>` | `[]` |
 | `BTreeMap<String, V>`, `HashMap<String, V>` | `{}` |
-| enum com variante `#[default]` ou `#[colcha(default)]` | segmento da variante |
+| enum unitário com variante `#[default]` ou `#[colcha(default)]` | segmento da variante |
+| enum tagueado com variante default | objeto com o tag e os defaults dos campos |
 | struct cujos campos têm default | composição dos defaults |
 
 `String`, inteiros, `f32`, `f64` e tipos nativos não têm default natural: o campo é obrigatório. Um campo sem default natural aceita ausência por `Option<T>`; não existe `Required<T>`. `#[colcha(default = <literal>)]` sobrescreve o default natural.
@@ -403,9 +410,31 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 | `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |
 | `#[colcha(default)]` | variante de enum | marca a variante default quando `#[default]` não é usado |
 | `#[colcha(rename = "...")]` | campo ou variante | troca o segmento do caminho |
-| `#[colcha(version = N)]` | struct raiz | define `Schema::VERSION`; o default é 1 |
+| `#[colcha(tag = "...")]` | enum raiz | representa o enum como união tagueada |
+| `#[colcha(version = N)]` | struct ou enum raiz | define `Schema::VERSION`; o default é 1 |
 
 `Vec<T>` sem `#[colcha(atomic)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Atributo desconhecido é erro de compilação.
+
+### Tagged unions
+
+`#[colcha(tag = "kind")]` troca a representação de string por um objeto com campo discriminante. Cada variante vira um nó em `Node.variants`. Variante unitária é um objeto vazio; variante nomeada é um struct.
+
+```rust
+#[derive(colcha::Schema, colcha::Materialize)]
+#[colcha(tag = "kind")]
+enum Action {
+    Restart,
+    Start {
+        service: String,
+        #[colcha(default = 3)]
+        retries: u32,
+    },
+}
+```
+
+No DSL, o valor é um objeto literal: `action: { kind: "start", service: "api" }`. A dobra lê o tag, escolhe a variante, preenche os defaults dos campos e rejeita campo desconhecido. O valor dobrado mantém o campo tag.
+
+`Option<E>` aceita `null`. `Vec<E>` precisa de `#[colcha(atomic)]`; a materialização aplica os defaults dos campos, porque a lista atômica não desce por caminho. `#[colcha(key)]` em campo de variante e um campo com o nome do tag são erros de compilação. Variante com campos posicionais é erro de compilação. Uma variante default só compõe default natural quando todos os campos têm default.
 
 ### EXAMPLE: alerta de monitoramento
 
@@ -491,3 +520,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0006: override por folha e compactação explícita. Rejeitados: override por struct; compactação automática.
 - ADR-0007: segmentos de `Path` são strings case-sensitive. Rejeitados: normalização de caixa; `%`-encoding; chave de mapa como categoria opaca.
 - ADR-0008: `Raw` cobre valores heterogêneos. Rejeitados: traits em `Value`; caso especial de mapa; merge por chave dentro de `Raw`.
+- ADR-0009: uniões tagueadas em enums. Rejeitados: payload sem tag; tag adjacente; caminhos por variante; `serde` como formato.

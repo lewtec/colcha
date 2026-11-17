@@ -142,7 +142,8 @@ Each type answers one question: does it have a natural default? If yes, the fiel
 | `Vec<T>` | `[]` |
 | `BTreeSet<T>`, `HashSet<T>` | `[]` |
 | `BTreeMap<String, V>`, `HashMap<String, V>` | `{}` |
-| enum with `#[default]` or `#[colcha(default)]` | the variant segment |
+| unit enum with `#[default]` or `#[colcha(default)]` | the variant segment |
+| tagged enum with a default variant | object with the tag and field defaults |
 | struct whose fields all have defaults | composition of those defaults |
 
 `String`, integers, `f32`, `f64` and native types have no natural default. A field of one of those types must be present. To accept absence, wrap the field in `Option<T>`. There is no `Required<T>`.
@@ -174,6 +175,25 @@ struct File {
 ```
 
 The DSL accepts an object literal after `values:`. `Raw` has no child paths. The parser rejects `values.foo.bar`; `values.foo` addresses one map entry. `Raw` materialization rejects native values.
+
+## Tagged unions
+
+An enum without a tag is a flat string. Add `#[colcha(tag = "kind")]` to carry fields per variant.
+
+```rust
+#[derive(colcha::Schema, colcha::Materialize)]
+#[colcha(tag = "kind")]
+enum Action {
+    Restart,
+    Start {
+        service: String,
+        #[colcha(default = 3)]
+        retries: u32,
+    },
+}
+```
+
+The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]`.
 
 ## Tests
 

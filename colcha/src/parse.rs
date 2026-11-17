@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         if self.eat_char('{') {
-            if node.kind == NodeKind::Raw {
+            if matches!(node.kind, NodeKind::Raw | NodeKind::Union) {
                 let value = self.parse_object_body(depth)?;
                 self.emit_value(&path, node, value, EmitKind::Candidate)?;
                 return Ok(());
@@ -267,7 +267,7 @@ impl<'a> Parser<'a> {
         }
 
         if self.peek_char() == Some('{') {
-            if node.kind == NodeKind::Raw {
+            if matches!(node.kind, NodeKind::Raw | NodeKind::Union) {
                 let value = self.parse_object(depth)?;
                 return Ok(Expr {
                     candidates: vec![value],
@@ -430,6 +430,20 @@ impl<'a> Parser<'a> {
         value: Value,
         kind: EmitKind,
     ) -> Result<(), Error> {
+        if node.kind == NodeKind::Union {
+            check_union_value(node, path, &value)?;
+        }
+
+        if node.kind == NodeKind::List && node.key_field.is_none() {
+            if let (Value::List(items), Some(element)) = (&value, node.element.as_deref()) {
+                if element.kind == NodeKind::Union {
+                    for item in items {
+                        check_union_value(element, path, item)?;
+                    }
+                }
+            }
+        }
+
         if node.kind == NodeKind::List && node.key_field.is_some() {
             match value {
                 Value::List(items) => {
@@ -535,7 +549,11 @@ impl<'a> Parser<'a> {
         match (&value, node.kind) {
             (
                 Value::Map(_),
-                NodeKind::Struct | NodeKind::Map | NodeKind::Native | NodeKind::Raw,
+                NodeKind::Struct
+                | NodeKind::Map
+                | NodeKind::Native
+                | NodeKind::Raw
+                | NodeKind::Union,
             ) => self.emit_value(&child, node, value, kind),
             (Value::List(_), NodeKind::List) => self.emit_value(&child, node, value, kind),
             (Value::Map(_), _) => Err(Error::path(
@@ -850,4 +868,50 @@ impl<'a> Parser<'a> {
 enum EmitKind {
     Candidate,
     Default,
+}
+
+fn check_union_value(node: &Node, path: &Path, value: &Value) -> Result<(), Error> {
+    if value.is_null() {
+        if node.optional {
+            return Ok(());
+        }
+        return Err(Error::path(
+            path.to_string(),
+            "a tagged union is an object, found null",
+        ));
+    }
+    let Some(tag) = node.tag.as_deref() else {
+        return Err(Error::path(
+            path.to_string(),
+            "tagged union has no tag field",
+        ));
+    };
+    let Value::Map(map) = value else {
+        return Err(Error::path(
+            path.to_string(),
+            format!("a tagged union is an object, found {}", value.type_name()),
+        ));
+    };
+    let tag_value = map.get(tag).ok_or_else(|| {
+        Error::path(
+            path.to_string(),
+            format!("a tagged union needs a '{tag}' field"),
+        )
+    })?;
+    let Value::String(variant) = tag_value else {
+        return Err(Error::path(
+            path.to_string(),
+            format!(
+                "the tag '{tag}' is a string, found {}",
+                tag_value.type_name()
+            ),
+        ));
+    };
+    if !node.variants.contains_key(variant) {
+        return Err(Error::path(
+            path.to_string(),
+            format!("unknown variant '{variant}'"),
+        ));
+    }
+    Ok(())
 }

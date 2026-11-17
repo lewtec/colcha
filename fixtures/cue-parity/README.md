@@ -56,7 +56,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | yes |
 | Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
 | Heterogeneous values | base16-gtk, schema | `values` mixes strings, ints, and nested maps | yes (`Raw`) |
-| Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | partial |
+| Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | yes (`#[colcha(tag)]`) |
 | Lists of structs | schema | `backup.actions` keeps input order | partial |
 | Comprehensions | schema | `core:place` expands `items` into `file.home` | no |
 | Struct defaults | schema | `lint.tools.00-go.enable = true` comes from the schema | yes |
@@ -68,6 +68,6 @@ The corpus also pins behaviour that colcha does not model yet:
 
 - `Option<T>` treats `null` and absence as the same value.
 - `Vec<T>` is a keyed map by default, so input order is lost.
-- Enums accept unit variants only.
+- Tagged unions accept named variants only; scalar variants use `Raw`.
 - Structs are closed and reject unknown fields.
 - References, comprehensions, and conditional fields have no syntax.

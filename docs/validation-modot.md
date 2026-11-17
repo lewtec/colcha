@@ -23,7 +23,7 @@ Ele não representa o config real sem extensões.
 - `Path::Display` cita segmentos que não são palavras nuas e junta os segmentos com `.`.
 - O schema é estático e vem de `T::schema()`.
 - Structs derivadas são fechadas.
-- Enums derivados têm apenas variantes unitárias.
+- Enums derivados são unitários por padrão. `#[colcha(tag = "...")]` produz uma união tagueada com variantes nomeadas.
 - `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica.
 - `Raw` aceita qualquer `Value` concreto. Ele não tem caminhos filhos.
 - `Value` não é um tipo de campo direto. Use `Raw`; ele implementa `NodeOf` e `Materialize`.
@@ -110,18 +110,23 @@ O fold usa LWW no valor inteiro. `Raw` não tem caminhos filhos e rejeita valor
 nativo na materialização. `BTreeMap<String, Raw>` compila e cobre `values` e
 `options`.
 
-### P1: uniões com payload
+### P1: uniões com payload (resolvido)
 
-O derive rejeita variantes com campos. O modot usa uniões etiquetadas:
+O modot usa uniões etiquetadas:
 
 - `#BackupActionGitRepoSync | #BackupActionRsync | #BackupActionArchive`.
 - `#PlaceStepMove | #PlaceStepRequire`.
 - `#Slot: string | #SlotText | #SlotRef | #SlotLink`.
 - `#File: #FileLines | #FileText | #FileRef | #FileLink | #FileStructured`.
 
-Direção: suportar enum com etiqueta externa. Exemplo: `#[colcha(tag = "kind")]`.
-O fato é um mapa com o campo de etiqueta e os campos da variante. O fold valida a
-etiqueta e exige os campos da variante. Para `#Slot` e `#File`, usar `Raw` na v1.
+Resolução: `#[colcha(tag = "kind")]` transforma o enum em `NodeKind::Union` com
+`tag` e `variants`. O fato é um mapa com o campo de etiqueta e os campos da
+variante. O parser exige a etiqueta; o fold escolhe a variante, preenche defaults,
+rejeita campo desconhecido e mantém a etiqueta no valor dobrado. `Option<T>`
+aceita `null`. `Vec<T>` exige `#[colcha(atomic)]`.
+
+`#Slot`, `#File` e as demais uniões que misturam string com struct continuam
+representáveis por `Raw` na v1. Um enum tagueado não aceita variante escalar.
 
 ### P1: structs abertas
 
@@ -218,7 +223,7 @@ contrato de `SchemaId`.
    `base0A`, `dconf` e `$schema`.
 2. Folha `Raw` com `NodeOf` e `Materialize`. Feito. Desbloqueia `values`, `options` e
    `desktop.raw`.
-3. Enum com etiqueta externa. Desbloqueia `backup.actions` e `place.steps`.
+3. Enum com etiqueta externa. Feito. Desbloqueia `backup.actions` e `place.steps`.
 4. Struct ou mapa aberto. Desbloqueia topo, `options` e `#PlaceConfig`.
 5. Política de lista explícita. Desbloqueia `actions`, `cmd` e `ips`.
 6. `MinLen` e `Nullable`. Fecham validações do CUE.

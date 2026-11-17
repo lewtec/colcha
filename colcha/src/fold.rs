@@ -55,7 +55,7 @@ fn fold_node(
             return Ok(node.default.clone().unwrap_or(Value::Null));
         }
         match node.kind {
-            NodeKind::Leaf | NodeKind::Raw => {}
+            NodeKind::Leaf | NodeKind::Raw | NodeKind::Union => {}
             _ => {
                 if let Some(default) = &node.default {
                     return Ok(default.clone());
@@ -76,10 +76,400 @@ fn fold_node(
         NodeKind::Struct => fold_struct(node, path, facts, registry, key),
         NodeKind::List => fold_list(node, path, facts, registry),
         NodeKind::Map => fold_map(node, path, facts, registry),
+        NodeKind::Union => fold_union(node, path, facts),
         NodeKind::Leaf => fold_leaf(node, path, facts, None),
         NodeKind::Raw => fold_leaf(node, path, facts, None),
         NodeKind::Native => fold_native(node, path, facts, registry),
     }
+}
+
+fn fold_union(node: &Node, path: &Path, facts: &[Fact]) -> Result<Value, Error> {
+    let direct: Vec<&Fact> = facts.iter().filter(|fact| fact.path == *path).collect();
+
+    let mut constraints = node.constraints.clone();
+    for fact in &direct {
+        if let FactKind::Constraint(constraint) = &fact.kind {
+            constraints.push(constraint.clone());
+        }
+    }
+    check_constraints(&constraints, path)?;
+
+    let mut candidates: Vec<(Stamp, Value)> = Vec::new();
+    let mut defaults: Vec<(Stamp, Value)> = Vec::new();
+    for fact in &direct {
+        match &fact.kind {
+            FactKind::Candidate(value) => candidates.push((fact.stamp, value.clone())),
+            FactKind::Default(value) => defaults.push((fact.stamp, value.clone())),
+            FactKind::Constraint(_) | FactKind::Tombstone => {}
+        }
+    }
+
+    let mut selected = select(node.policy, &candidates, &constraints, path)?;
+    if selected.is_none() {
+        selected = select(node.policy, &defaults, &constraints, path)?;
+    }
+    if selected.is_none() {
+        if let Some(default) = &node.default {
+            if satisfies(default, &constraints, path)? {
+                selected = Some(default.clone());
+            }
+        }
+    }
+
+    match selected {
+        Some(value) => complete_union(node, path, Some(&value)),
+        None if node.optional => Ok(Value::Null),
+        None => Err(Error::fold(
+            path.clone(),
+            "no valid variant and no valid default",
+        )),
+    }
+}
+
+/// Complete a value that lives at one atomic path.
+///
+/// A tagged union stores its whole value in one fact, so the fold validates and
+/// fills the fields of the selected variant here instead of walking child paths.
+fn complete_value(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    match node.kind {
+        NodeKind::Struct => complete_struct(node, path, value, None),
+        NodeKind::List => {
+            if node.key_field.is_some() {
+                complete_keyed_list(node, path, value)
+            } else {
+                complete_list(node, path, value)
+            }
+        }
+        NodeKind::Map => complete_map(node, path, value),
+        NodeKind::Union => complete_union(node, path, value),
+        NodeKind::Leaf => complete_leaf(node, path, value),
+        NodeKind::Raw => match value {
+            Some(value) => Ok(value.clone()),
+            None => node
+                .default
+                .clone()
+                .ok_or_else(|| Error::fold(path.clone(), "required field has no value")),
+        },
+        NodeKind::Native => complete_native(node, path, value),
+    }
+}
+
+fn complete_struct(
+    node: &Node,
+    path: &Path,
+    value: Option<&Value>,
+    key: Option<&str>,
+) -> Result<Value, Error> {
+    let Some(value) = value else {
+        match &node.default {
+            Some(default) if !default.is_null() => {
+                return complete_struct(node, path, Some(default), key);
+            }
+            _ => {
+                return Err(Error::fold(
+                    path.clone(),
+                    "required object has no value and no default",
+                ));
+            }
+        }
+    };
+    if value.is_null() {
+        if node.optional {
+            return Ok(Value::Null);
+        }
+        match &node.default {
+            Some(default) if !default.is_null() => {
+                return complete_struct(node, path, Some(default), key);
+            }
+            _ => {
+                return Err(Error::fold(path.clone(), "required object has no value"));
+            }
+        }
+    }
+    let Some(map) = value.as_map() else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("expected object, found {}", value.type_name()),
+        ));
+    };
+    if node.key_field.is_some() && key.is_none() {
+        return Err(Error::fold(path.clone(), "a keyed object needs a path key"));
+    }
+
+    let mut result = BTreeMap::new();
+    for (segment, child) in &node.fields {
+        let child_path = path
+            .child(segment)
+            .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+        let child_value = if node.key_field.as_deref() == Some(segment.as_str()) {
+            let key = key.expect("checked above");
+            Value::String(key.to_string())
+        } else {
+            complete_value(child, &child_path, map.get(segment))?
+        };
+        result.insert(segment.clone(), child_value);
+    }
+    for field in map.keys() {
+        if !node.fields.contains_key(field) {
+            return Err(Error::fold(
+                path.clone(),
+                format!("unknown field '{field}'"),
+            ));
+        }
+    }
+    Ok(Value::Map(result))
+}
+
+fn complete_leaf(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    let resolved = match value {
+        Some(value) if !value.is_null() => {
+            if satisfies(value, &node.constraints, path)? {
+                value.clone()
+            } else {
+                match &node.default {
+                    Some(default) if satisfies(default, &node.constraints, path)? => {
+                        default.clone()
+                    }
+                    _ => {
+                        return Err(Error::fold(
+                            path.clone(),
+                            format!(
+                                "value of type {} does not satisfy the field constraints",
+                                value.type_name()
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Some(_) => {
+            if node.optional {
+                return Ok(Value::Null);
+            }
+            match &node.default {
+                Some(default) => default.clone(),
+                None => {
+                    return Err(Error::fold(path.clone(), "required field has no value"));
+                }
+            }
+        }
+        None => match &node.default {
+            Some(default) => default.clone(),
+            None => {
+                return Err(Error::fold(path.clone(), "required field has no value"));
+            }
+        },
+    };
+
+    if !satisfies(&resolved, &node.constraints, path)? {
+        return Err(Error::fold(
+            path.clone(),
+            "default does not satisfy the field constraints",
+        ));
+    }
+    Ok(resolved)
+}
+
+fn complete_list(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    let Some(value) = value else {
+        return missing(node, path);
+    };
+    if value.is_null() {
+        if node.optional {
+            return Ok(Value::Null);
+        }
+        return missing(node, path);
+    }
+    let Some(items) = value.as_list() else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("expected list, found {}", value.type_name()),
+        ));
+    };
+    let element = node
+        .element
+        .as_deref()
+        .ok_or_else(|| Error::fold(path.clone(), "list has no element schema"))?;
+    let mut result = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let child = path
+            .child(&index.to_string())
+            .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+        result.push(complete_value(element, &child, Some(item))?);
+    }
+    Ok(Value::List(result))
+}
+
+fn complete_keyed_list(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    let Some(value) = value else {
+        return missing(node, path);
+    };
+    if value.is_null() {
+        if node.optional {
+            return Ok(Value::Null);
+        }
+        return missing(node, path);
+    }
+    let Some(items) = value.as_list() else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("expected list, found {}", value.type_name()),
+        ));
+    };
+    let element = node
+        .element
+        .as_deref()
+        .ok_or_else(|| Error::fold(path.clone(), "list has no element schema"))?;
+    let key_field = node
+        .key_field
+        .as_deref()
+        .ok_or_else(|| Error::fold(path.clone(), "keyed list has no key field"))?;
+
+    let mut entries = BTreeMap::new();
+    for item in items {
+        let Some(map) = item.as_map() else {
+            return Err(Error::fold(path.clone(), "a keyed list contains objects"));
+        };
+        let key = match map.get(key_field) {
+            Some(Value::String(key)) => key.clone(),
+            _ => {
+                return Err(Error::fold(
+                    path.clone(),
+                    format!("an element needs a string '{key_field}'"),
+                ));
+            }
+        };
+        let child = path
+            .child(&key)
+            .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+        let completed = complete_struct(element, &child, Some(item), Some(&key))?;
+        if entries.insert(key.clone(), completed).is_some() {
+            return Err(Error::fold(
+                path.clone(),
+                format!("duplicate key '{key}' in list"),
+            ));
+        }
+    }
+    Ok(Value::List(entries.into_values().collect()))
+}
+
+fn complete_map(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    let Some(value) = value else {
+        return missing(node, path);
+    };
+    if value.is_null() {
+        if node.optional {
+            return Ok(Value::Null);
+        }
+        return missing(node, path);
+    }
+    let Some(map) = value.as_map() else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("expected object, found {}", value.type_name()),
+        ));
+    };
+    let element = node
+        .element
+        .as_deref()
+        .ok_or_else(|| Error::fold(path.clone(), "map has no element schema"))?;
+    let mut result = BTreeMap::new();
+    for (key, item) in map {
+        let child = path
+            .child(key)
+            .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+        result.insert(key.clone(), complete_value(element, &child, Some(item))?);
+    }
+    Ok(Value::Map(result))
+}
+
+fn complete_union(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    let Some(value) = value else {
+        let Some(default) = &node.default else {
+            if node.optional {
+                return Ok(Value::Null);
+            }
+            return Err(Error::fold(
+                path.clone(),
+                "required tagged union has no value",
+            ));
+        };
+        return complete_union(node, path, Some(default));
+    };
+    if value.is_null() {
+        if node.optional {
+            return Ok(Value::Null);
+        }
+        if let Some(default) = &node.default {
+            if !default.is_null() {
+                return complete_union(node, path, Some(default));
+            }
+        }
+        return Err(Error::fold(
+            path.clone(),
+            "required tagged union has no value",
+        ));
+    }
+    let Some(map) = value.as_map() else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("a tagged union is an object, found {}", value.type_name()),
+        ));
+    };
+    let Some(tag) = node.tag.as_deref() else {
+        return Err(Error::fold(path.clone(), "tagged union has no tag field"));
+    };
+    let tag_value = map
+        .get(tag)
+        .ok_or_else(|| Error::fold(path.clone(), format!("missing tag field '{tag}'")))?;
+    let Value::String(variant_name) = tag_value else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("tag '{tag}' is a string, found {}", tag_value.type_name()),
+        ));
+    };
+    let Some(variant) = node.variants.get(variant_name) else {
+        return Err(Error::fold(
+            path.clone(),
+            format!("unknown variant '{variant_name}'"),
+        ));
+    };
+
+    let mut input = map.clone();
+    input.remove(tag);
+    let completed = complete_struct(variant, path, Some(&Value::Map(input)), None)?;
+    let Value::Map(mut result) = completed else {
+        return Err(Error::fold(
+            path.clone(),
+            "a tagged union variant is an object",
+        ));
+    };
+    result.insert(tag.to_string(), Value::String(variant_name.clone()));
+    Ok(Value::Map(result))
+}
+
+fn complete_native(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
+    match value {
+        Some(native @ Value::Native { .. }) => Ok(native.clone()),
+        Some(other) if other.is_null() && node.optional => Ok(Value::Null),
+        Some(other) => Err(Error::fold(
+            path.clone(),
+            format!("expected native value, found {}", other.type_name()),
+        )),
+        None => Err(Error::fold(
+            path.clone(),
+            "required native field has no value",
+        )),
+    }
+}
+
+fn missing(node: &Node, path: &Path) -> Result<Value, Error> {
+    if node.optional {
+        return Ok(Value::Null);
+    }
+    node.default
+        .clone()
+        .ok_or_else(|| Error::fold(path.clone(), "required field has no value"))
 }
 
 fn fold_struct(

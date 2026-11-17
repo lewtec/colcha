@@ -745,3 +745,281 @@ fn a_keyed_list_defaults_to_empty() {
     let fleet = resolve::<Fleet>(&State::empty(), &EmptyHost).expect("resolve");
     assert!(fleet.servers.is_empty());
 }
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+#[colcha(tag = "kind")]
+enum Action {
+    Restart,
+    Start {
+        service: String,
+        #[colcha(default = 3)]
+        retries: u32,
+    },
+    Stop {
+        service: String,
+        force: Option<bool>,
+    },
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Workflow {
+    name: String,
+    step: Action,
+}
+
+#[test]
+fn a_tagged_union_resolves_a_named_variant() {
+    let state = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "start", service: "api", retries: 5 }
+        "#,
+        1,
+    );
+    let workflow = resolve::<Workflow>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        workflow.step,
+        Action::Start {
+            service: "api".into(),
+            retries: 5,
+        }
+    );
+}
+
+#[test]
+fn a_tagged_variant_fills_field_defaults() {
+    let state = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "start", service: "api" }
+        "#,
+        1,
+    );
+    let workflow = resolve::<Workflow>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        workflow.step,
+        Action::Start {
+            service: "api".into(),
+            retries: 3,
+        }
+    );
+}
+
+#[test]
+fn a_tagged_union_unit_variant_resolves() {
+    let state = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step { kind: "restart" }
+        "#,
+        1,
+    );
+    let workflow = resolve::<Workflow>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(workflow.step, Action::Restart);
+}
+
+#[test]
+fn a_tagged_union_rejects_an_unknown_tag_at_parse() {
+    let error = parse::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "boom" }
+        "#,
+        stamp(1),
+    )
+    .expect_err("unknown tag");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn a_tagged_union_rejects_a_child_path() {
+    let error = parse::<Workflow>(
+        r#"
+        name: "deploy"
+        step.kind: "restart"
+        "#,
+        stamp(1),
+    )
+    .expect_err("child path");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn an_atomic_list_rejects_an_unknown_tag_at_parse() {
+    let error =
+        parse::<AtomicSteps>(r#"steps: [{ kind: "boom" }]"#, stamp(1)).expect_err("unknown tag");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn a_tagged_union_rejects_a_missing_tag_at_parse() {
+    let error = parse::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { service: "api" }
+        "#,
+        stamp(1),
+    )
+    .expect_err("missing tag");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn a_tagged_union_rejects_a_missing_required_field() {
+    let state = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "start" }
+        "#,
+        1,
+    );
+    let error = fold::<Workflow>(&state, &EmptyHost).expect_err("missing field");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[test]
+fn a_tagged_union_rejects_an_unknown_field() {
+    let state = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "start", service: "api", bogus: 1 }
+        "#,
+        1,
+    );
+    let error = fold::<Workflow>(&state, &EmptyHost).expect_err("unknown field");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[test]
+fn a_tagged_union_accepts_an_explicit_null_when_optional() {
+    let state = state_of::<MaybeAction>(r#"step: null"#, 1);
+    let value = resolve::<MaybeAction>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(value.step, None);
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct MaybeAction {
+    step: Option<Action>,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+#[colcha(tag = "kind")]
+enum GroupedAction {
+    Group { action: Action },
+    Single,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct NestedStep {
+    name: String,
+    step: GroupedAction,
+}
+
+#[test]
+fn a_tagged_union_nests_inside_a_variant() {
+    let state = state_of::<NestedStep>(
+        r#"
+        name: "deploy"
+        step: {
+            kind: "group"
+            action: { kind: "start", service: "api" }
+        }
+        "#,
+        1,
+    );
+    let step = resolve::<NestedStep>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        step.step,
+        GroupedAction::Group {
+            action: Action::Start {
+                service: "api".into(),
+                retries: 3,
+            },
+        }
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct AtomicSteps {
+    #[colcha(atomic)]
+    steps: Vec<Action>,
+}
+
+#[test]
+fn an_atomic_list_of_tagged_unions_materializes() {
+    let state = state_of::<AtomicSteps>(
+        r#"steps: [{ kind: "restart" }, { kind: "start", service: "api" }]"#,
+        1,
+    );
+    let steps = resolve::<AtomicSteps>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        steps.steps,
+        vec![
+            Action::Restart,
+            Action::Start {
+                service: "api".into(),
+                retries: 3,
+            },
+        ]
+    );
+}
+
+#[test]
+fn an_atomic_list_of_tagged_unions_rejects_unknown_fields() {
+    let state =
+        state_of::<AtomicSteps>(r#"steps: [{ kind: "start", service: "api", bogus: 1 }]"#, 1);
+    let error = resolve::<AtomicSteps>(&state, &EmptyHost).expect_err("unknown field");
+    assert!(matches!(error, Error::Materialize { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+#[colcha(tag = "kind")]
+enum DefaultedAction {
+    #[colcha(default)]
+    #[colcha(rename = "scheduled")]
+    Scheduled {
+        #[colcha(default = 1)]
+        retries: u32,
+        note: Option<String>,
+    },
+    Now,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct DefaultedWorkflow {
+    action: DefaultedAction,
+}
+
+#[test]
+fn a_tagged_default_variant_composes_field_defaults() {
+    let workflow = resolve::<DefaultedWorkflow>(&State::empty(), &EmptyHost).expect("resolve");
+    assert_eq!(
+        workflow.action,
+        DefaultedAction::Scheduled {
+            retries: 1,
+            note: None,
+        }
+    );
+}
+
+#[test]
+fn compact_preserves_a_tagged_union() {
+    let one = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "restart" }
+        "#,
+        1,
+    );
+    let two = state_of::<Workflow>(
+        r#"
+        name: "deploy"
+        step: { kind: "start", service: "api" }
+        "#,
+        2,
+    );
+    let state = one.union(&two);
+    let before = fold::<Workflow>(&state, &EmptyHost).expect("fold");
+    let after = fold::<Workflow>(&state.compact::<Workflow>(), &EmptyHost).expect("fold");
+    assert_eq!(before, after);
+}
