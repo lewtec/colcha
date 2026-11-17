@@ -1,4 +1,4 @@
-//! Three independent contributions compose into one typed `Alert`.
+//! Three independent contributions compose into one keyed list of alerts.
 //!
 //! Run with:
 //!
@@ -16,18 +16,21 @@ use colcha::{
 
 #[derive(Debug, PartialEq, Schema, Materialize)]
 struct Config {
-    alert: Alert,
+    alert: Vec<Alert>,
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]
 struct Alert {
+    #[colcha(key)]
     name: String,
     threshold: f64,
+    #[colcha(default = "warn")]
     severity: Severity,
     #[colcha(native)]
     notify: Webhook,
     #[colcha(union)]
     tags: BTreeSet<String>,
+    #[colcha(default = false)]
     muted: bool,
 }
 
@@ -110,13 +113,38 @@ fn state_of(source: &str, clock: u64) -> Result<State, Box<dyn StdError>> {
     Ok(state)
 }
 
+fn summarize(value: &Value) -> Vec<String> {
+    let Some(Value::List(alerts)) = value.as_map().and_then(|map| map.get("alert")) else {
+        return Vec::new();
+    };
+    alerts
+        .iter()
+        .filter_map(|alert| {
+            let map = alert.as_map()?;
+            let name = map.get("name")?.as_str()?;
+            let threshold = map.get("threshold")?.as_f64()?;
+            let tags = map
+                .get("tags")
+                .and_then(Value::as_list)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            Some(format!(
+                "  {name:<12} threshold={threshold:<4} tags=[{tags}]"
+            ))
+        })
+        .collect()
+}
+
 fn main() -> Result<(), Box<dyn StdError>> {
     let platform = state_of(
         r#"
-        alert: {
-          name:      string & =~"^[a-z0-9-]+$"
+        alert.db-alerts: {
           threshold: float & >=0 & <=100
-          severity:  *"warn" | "page" | "info"
           notify:    _core.Webhook
           tags:      ["prod"]
         }
@@ -126,11 +154,15 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let service = state_of(
         r#"
-        alert: {
-          name:      "db-alerts"
+        alert.db-alerts: {
           threshold: 80
           notify:    { url: "https://example.test/hook" }
           tags:      ["db"]
+        }
+        alert.cache-miss: {
+          threshold: 60
+          notify:    { url: "https://example.test/cache" }
+          tags:      ["cache"]
         }
         "#,
         2,
@@ -138,10 +170,14 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let oncall = state_of(
         r#"
-        alert: {
+        alert.db-alerts: {
           threshold: 95
           tags:      ["oncall"]
-          muted:     false
+        }
+        alert.disk-full: {
+          threshold: 99
+          notify:    { url: "https://example.test/disk" }
+          tags:      ["oncall"]
         }
         "#,
         3,
@@ -153,7 +189,10 @@ fn main() -> Result<(), Box<dyn StdError>> {
 
     let host = DemoHost::new();
     let folded = colcha::fold::<Config>(&merged, &host)?;
-    println!("\nfolded value:\n{folded:#?}");
+    println!("\nfolded list (pure, no host effect):");
+    for line in summarize(&folded) {
+        println!("{line}");
+    }
 
     let config = resolve::<Config>(&merged, &host)?;
     println!("\nresolved Config:\n{config:#?}");

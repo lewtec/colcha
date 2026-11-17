@@ -383,3 +383,30 @@ fn a_large_input_is_rejected_before_parsing() {
     let error = parse::<Service>(&source, stamp(1)).expect_err("too large");
     assert!(matches!(error, Error::Parse { .. }), "{error:?}");
 }
+
+#[test]
+fn contributions_add_elements_to_a_keyed_list() {
+    let one = state_of::<Fleet>(r#"servers.alpha: { port: 1 }"#, 1);
+    let two = state_of::<Fleet>(r#"servers.beta: { port: 2 }"#, 2);
+    let fleet = resolve::<Fleet>(&one.union(&two), &EmptyHost).expect("resolve");
+    assert_eq!(
+        fleet.servers,
+        vec![
+            Server {
+                name: "alpha".into(),
+                port: 1,
+            },
+            Server {
+                name: "beta".into(),
+                port: 2,
+            },
+        ]
+    );
+}
+
+#[test]
+fn writing_a_key_field_inside_a_block_is_rejected() {
+    let error = parse::<Fleet>(r#"servers.alpha: { name: "other", port: 1 }"#, stamp(1))
+        .expect_err("key write");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}

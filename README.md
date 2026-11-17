@@ -59,7 +59,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## The alert example
 
-The full example is in [`colcha/examples/alert.rs`](colcha/examples/alert.rs). It merges three contributions with distinct stamps, folds them and resolves a typed value. A native `Webhook` runs only during `resolve`.
+The full example is in [`colcha/examples/alert.rs`](colcha/examples/alert.rs). The root holds `alert: Vec<Alert>`, keyed by `name`. Three contributions write different keys and merge field by field:
+
+```text
+alert.db-alerts: {
+  threshold: float & >=0 & <=100
+  notify:    _core.Webhook
+  tags:      ["prod"]
+}
+```
+
+`db-alerts` becomes the element key, so `name` needs no write. A native `Webhook` runs per element only during `resolve`.
 
 ```text
 cargo run -p colcha --example alert
@@ -69,24 +79,43 @@ Expected output, abridged:
 
 ```text
 merge order independent: true
+
+folded list (pure, no host effect):
+  cache-miss   threshold=60   tags=[cache]
+  db-alerts    threshold=95   tags=[db, oncall, prod]
+  disk-full    threshold=99   tags=[oncall]
+[host] build Webhook { url: "https://example.test/cache" }
 [host] build Webhook { url: "https://example.test/hook" }
+[host] build Webhook { url: "https://example.test/disk" }
 
 resolved Config:
 Config {
-    alert: Alert {
-        name: "db-alerts",
-        threshold: 95.0,
-        severity: Warn,
-        notify: Webhook {
-            url: "https://example.test/hook",
+    alert: [
+        Alert {
+            name: "cache-miss",
+            threshold: 60.0,
+            severity: Warn,
+            notify: Webhook { url: "https://example.test/cache" },
+            tags: { "cache" },
+            muted: false,
         },
-        tags: {
-            "db",
-            "oncall",
-            "prod",
+        Alert {
+            name: "db-alerts",
+            threshold: 95.0,
+            severity: Warn,
+            notify: Webhook { url: "https://example.test/hook" },
+            tags: { "db", "oncall", "prod" },
+            muted: false,
         },
-        muted: false,
-    },
+        Alert {
+            name: "disk-full",
+            threshold: 99.0,
+            severity: Warn,
+            notify: Webhook { url: "https://example.test/disk" },
+            tags: { "oncall" },
+            muted: false,
+        },
+    ],
 }
 ```
 
@@ -105,7 +134,7 @@ Defaults, constraints and candidates stay in the state. A candidate that violate
 
 ## Keyed collections
 
-`Vec<T>` is a map by key. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment. The fold derives the field value from the key. Output is ordered by key.
+`Vec<T>` behaves as a map keyed by one field. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment: `alert.foo` addresses element `foo`, and the fold derives the key field from that segment. The fold orders output by key.
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
