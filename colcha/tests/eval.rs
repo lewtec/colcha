@@ -222,9 +222,8 @@ struct Hosted {
 
 #[test]
 fn context_values_fill_references_that_are_not_in_the_document() {
-    let mut context = Context::new();
-    context
-        .insert(
+    let context = Context::new()
+        .with(
             "runtime",
             Value::Map(BTreeMap::from([
                 ("hostname".into(), Value::String("box".into())),
@@ -243,6 +242,59 @@ fn context_values_fill_references_that_are_not_in_the_document() {
     let value = resolve::<Hosted>(&state, &EmptyHost).expect("resolve");
     assert_eq!(value.hostname, "box");
     assert_eq!(value.timezone, "UTC");
+}
+
+#[test]
+fn contexts_combine_into_new_values() {
+    let base = Context::new()
+        .with("runtime.hostname", Value::String("box".into()))
+        .unwrap();
+    let extra = Context::new()
+        .with("runtime.timezone", Value::String("UTC".into()))
+        .unwrap();
+
+    let merged = base.merge(&extra).expect("merge");
+    assert_eq!(
+        merged
+            .get(&colcha::Path::parse("runtime.hostname").unwrap())
+            .and_then(Value::as_str),
+        Some("box")
+    );
+    assert_eq!(
+        merged
+            .get(&colcha::Path::parse("runtime.timezone").unwrap())
+            .and_then(Value::as_str),
+        Some("UTC")
+    );
+
+    assert_eq!(
+        base.get(&colcha::Path::parse("runtime.timezone").unwrap()),
+        None
+    );
+    assert_eq!(base.merge(&extra).unwrap(), merged);
+    assert_eq!(extra.merge(&base).unwrap(), merged);
+}
+
+#[test]
+fn context_merges_reject_conflicting_values() {
+    let first = Context::new()
+        .with("runtime.hostname", Value::String("box".into()))
+        .unwrap();
+    let second = Context::new()
+        .with("runtime.hostname", Value::String("other".into()))
+        .unwrap();
+    let error = first.merge(&second).expect_err("conflict");
+    assert!(matches!(error, Error::Eval { .. }), "{error:?}");
+
+    let repeated = first
+        .with("runtime.hostname", Value::String("box".into()))
+        .expect("equal value is idempotent");
+    assert_eq!(repeated, first);
+
+    let error = first
+        .with("runtime.hostname", Value::String("other".into()))
+        .expect_err("conflict");
+    assert!(matches!(error, Error::Eval { .. }), "{error:?}");
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]

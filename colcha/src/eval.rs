@@ -22,7 +22,7 @@ const MAX_DEPTH: usize = 32;
 ///
 /// Document fields win over context values. A context path may be read as a
 /// whole value or as the root of a nested map.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Context {
     values: BTreeMap<Path, Value>,
 }
@@ -32,17 +32,37 @@ impl Context {
         Context::default()
     }
 
-    /// Add one host-provided value. `path` uses the same dotted syntax as a reference.
-    pub fn insert(&mut self, path: impl AsRef<str>, value: Value) -> Result<(), Error> {
+    /// Return a new context with one more value. The receiver stays unchanged.
+    ///
+    /// Repeating a path with an equal value is idempotent. A different value at
+    /// the same path is `Error::Eval`.
+    pub fn with(&self, path: impl AsRef<str>, value: Value) -> Result<Context, Error> {
         let path = Path::parse(path.as_ref())?;
-        self.values.insert(path, value);
-        Ok(())
+        self.merge(&Context {
+            values: BTreeMap::from([(path, value)]),
+        })
     }
 
-    /// Builder form of [`Context::insert`].
-    pub fn with(mut self, path: impl AsRef<str>, value: Value) -> Result<Context, Error> {
-        self.insert(path, value)?;
-        Ok(self)
+    /// Combine two immutable contexts into a new one.
+    ///
+    /// Equal values at the same path are idempotent. Different values at the
+    /// same path are `Error::Eval`.
+    pub fn merge(&self, other: &Context) -> Result<Context, Error> {
+        let mut values = self.values.clone();
+        for (path, value) in &other.values {
+            match values.get(path) {
+                Some(existing) if existing != value => {
+                    return Err(Error::eval(
+                        path.to_string(),
+                        "context values conflict at the same path",
+                    ));
+                }
+                _ => {
+                    values.insert(path.clone(), value.clone());
+                }
+            }
+        }
+        Ok(Context { values })
     }
 
     pub fn get(&self, path: &Path) -> Option<&Value> {

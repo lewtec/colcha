@@ -217,6 +217,13 @@ pub fn evaluate<T: Schema>(
 pub fn fold<T: Schema>(state: &State, registry: &dyn NativeRegistry) -> Result<Value>;
 pub fn resolve<T: Schema + Materialize>(state: &State, host: &dyn NativeHost) -> Result<T>;
 
+impl Context {
+    pub fn new() -> Context;
+    pub fn with(&self, path: impl AsRef<str>, value: Value) -> Result<Context>;
+    pub fn merge(&self, other: &Context) -> Result<Context>;
+    pub fn get(&self, path: &Path) -> Option<&Value>;
+}
+
 impl State {
     pub fn empty() -> State;
     pub fn insert<T: Schema>(&mut self, fact: Fact) -> Result<()>;
@@ -252,6 +259,10 @@ A v1 embute um avaliador na fase de resolução. `evaluate::<T>` recebe a autori
 um `Context` do host e o `Stamp`, e devolve `Vec<Fact>`. O avaliador não muda
 `fold`, `State` nem `Materialize`; ele apenas produz fatos concretos antes da
 inserção.
+
+`Context` é imutável para quem chama. `with` e `merge` devolvem um novo
+`Context`; `merge` é comutativo e idempotente quando não há valores diferentes
+no mesmo caminho. Conflito no mesmo caminho devolve `Error::Eval`.
 
 O avaliador MUST resolver, nesta ordem:
 

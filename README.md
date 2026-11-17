@@ -177,6 +177,8 @@ let config = resolve::<Config>(&state, &EmptyHost)?;
 
 References resolve in this order: comprehension binding, document field (including forward references), then `Context`. A missing reference, a cycle, an active duplicate or an ambiguous reference returns `Error::Eval`. Interpolation accepts scalars only. Truthiness is false for `null`, `false`, `0`, `0.0`, empty string, empty list and empty map.
 
+`Context` is immutable for the caller. `with` and `merge` return a new context; `merge` is commutative and idempotent when paths do not disagree. Different values at the same path return `Error::Eval`.
+
 ## Defaults
 
 Each type answers one question: does it have a natural default? If yes, the field opens as `*default | type` and absence stays valid. If no, the field must be present.

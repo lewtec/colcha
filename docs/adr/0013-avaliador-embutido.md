@@ -40,6 +40,11 @@ O avaliador MUST emitir apenas `Fact` com `Value` concreto. `fold`, `State` e
 `Materialize` não mudam. Referência não resolvida, ciclo, campo ativo duplicado
 ou referência ambígua devolvem `Error::Eval`.
 
+O `Context` é imutável para quem chama. `with` e `merge` devolvem um novo
+`Context`; um valor nunca é alterado inplace, só combinado em um novo valor.
+`merge` é comutativo e idempotente quando não há valores diferentes no mesmo
+caminho.
+
 ## Consequences
 
 `parse` continua sendo o front end do subconjunto concreto. `evaluate` cobre a
