@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## The alert example
 
-The full example is in [`colcha/examples/alert.rs`](colcha/examples/alert.rs). The root holds `alert: Vec<Alert>`, keyed by `name`. Three contributions write different keys and merge field by field:
+The full example is in [`crates/colcha/examples/alert.rs`](crates/colcha/examples/alert.rs). The root holds `alert: Vec<Alert>`, keyed by `name`. Three contributions write different keys and merge field by field:
 
 ```text
 alert.db-alerts: {

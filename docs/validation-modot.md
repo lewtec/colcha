@@ -88,7 +88,7 @@ Resolução: `Path` agora guarda strings case-sensitive. Cada segmento é uma
 string não vazia. O parser aceita palavra nua ou literal entre aspas. `Display`
 cita todo segmento que não seja palavra nua e usa `.` entre segmentos. A
 codificação é reversível, então `a/b` (um segmento) e `a.b` (dois segmentos) não
-colidem. Testes em `colcha/tests/core.rs` cobrem `base0A`, `base0a`, barras,
+colidem. Testes em `crates/colcha/tests/core.rs` cobrem `base0A`, `base0a`, barras,
 pontos e round-trip de `Display`.
 
 ### P0: valores arbitrários (resolvido)

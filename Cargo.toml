@@ -1,5 +1,5 @@
 [workspace]
-members = ["colcha", "colcha-derive"]
+members = ["crates/colcha", "crates/colcha-derive"]
 resolver = "2"
 
 [workspace.package]
