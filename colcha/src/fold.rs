@@ -198,6 +198,9 @@ fn complete_struct(
 
     let mut result = BTreeMap::new();
     for (segment, child) in &node.fields {
+        if node.rest.as_deref() == Some(segment.as_str()) {
+            continue;
+        }
         let child_path = path
             .child(segment)
             .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
@@ -209,8 +212,31 @@ fn complete_struct(
         };
         result.insert(segment.clone(), child_value);
     }
+    if let Some(rest) = &node.rest {
+        if map.contains_key(rest) {
+            return Err(Error::fold(
+                path.clone(),
+                format!("field '{rest}' collects the unknown fields of the object"),
+            ));
+        }
+        let element = node
+            .rest_element()
+            .ok_or_else(|| Error::fold(path.clone(), "the rest field is not a map"))?;
+        for (field, item) in map {
+            if node.fields.contains_key(field) {
+                continue;
+            }
+            let child_path = path
+                .child(field)
+                .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+            result.insert(
+                field.clone(),
+                complete_value(element, &child_path, Some(item))?,
+            );
+        }
+    }
     for field in map.keys() {
-        if !node.fields.contains_key(field) {
+        if node.rest.is_none() && !node.fields.contains_key(field) {
             return Err(Error::fold(
                 path.clone(),
                 format!("unknown field '{field}'"),
@@ -481,6 +507,9 @@ fn fold_struct(
 ) -> Result<Value, Error> {
     let mut map = BTreeMap::new();
     for (segment, child) in &node.fields {
+        if node.rest.as_deref() == Some(segment.as_str()) {
+            continue;
+        }
         let child_path = path
             .child(segment)
             .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
@@ -494,6 +523,21 @@ fn fold_struct(
             fold_node(child, &child_path, facts, registry, None)?
         };
         map.insert(segment.clone(), value);
+    }
+    if node.rest.is_some() {
+        let element = node
+            .rest_element()
+            .ok_or_else(|| Error::fold(path.clone(), "the rest field is not a map"))?;
+        for segment in direct_child_segments(facts, path) {
+            if node.fields.contains_key(&segment) {
+                continue;
+            }
+            let child_path = path
+                .child(&segment)
+                .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
+            let value = fold_node(element, &child_path, facts, registry, None)?;
+            map.insert(segment, value);
+        }
     }
     Ok(Value::Map(map))
 }

@@ -50,7 +50,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Defaults | base16-gtk, webapp | `prefer_dark: 1`, `cursor_size: 24`, `browser: null` | yes |
 | Constraints | base16-gtk | `string & =~"^#[0-9a-fA-F]{6}$"` | partial |
 | Conditionals | base16-gtk | `if options.base16.mode == "dark" { ... }` | no |
-| Open structs | base16-gtk | `#gtkSettingsShared` ends with `...` | no |
+| Open structs | base16-gtk | `#gtkSettingsShared` ends with `...` | yes (`#[colcha(rest)]`) |
 | Optional fields and maps | webapp | `apps?: [string]: {...}`, `profile?` | partial |
 | Open lists | webapp | `extra_flags: [...string]` | partial |
 | Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | yes |
@@ -69,5 +69,5 @@ The corpus also pins behaviour that colcha does not model yet:
 - `Option<T>` treats `null` and absence as the same value.
 - `Vec<T>` is a keyed map by default, so input order is lost.
 - Tagged unions accept named variants only; scalar variants use `Raw`.
-- Structs are closed and reject unknown fields.
+- Open structs need an explicit `#[colcha(rest)]` field; a definition that ends in `...` has no direct equivalent.
 - References, comprehensions, and conditional fields have no syntax.

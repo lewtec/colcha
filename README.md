@@ -195,6 +195,21 @@ enum Action {
 
 The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]`.
 
+## Open structs
+
+A `#[colcha(rest)]` map collects the keys that the struct does not declare. The map value type decides how each extra key folds.
+
+```rust
+#[derive(colcha::Schema, colcha::Materialize)]
+struct Place {
+    name: String,
+    #[colcha(rest)]
+    extra: BTreeMap<String, Raw>,
+}
+```
+
+With that schema, `owner: "team"` is a valid field and the folded value is `{ name: "...", owner: "team" }`. The materialized `extra` map holds `owner`. The rest segment itself is not writable: `extra: {...}` is `Error::Path`. A tagged union variant cannot declare a rest field.
+
 ## Tests
 
 ```text

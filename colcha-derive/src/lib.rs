@@ -28,6 +28,7 @@ struct FieldAttrs {
     atomic: bool,
     flat: bool,
     native: bool,
+    rest: bool,
     default: Option<Lit>,
     rename: Option<String>,
 }
@@ -41,6 +42,9 @@ fn field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
         attribute.parse_nested_meta(|meta| {
             if meta.path.is_ident("key") {
                 attrs.key = true;
+                Ok(())
+            } else if meta.path.is_ident("rest") {
+                attrs.rest = true;
                 Ok(())
             } else if meta.path.is_ident("atomic") {
                 attrs.atomic = true;
@@ -145,6 +149,32 @@ fn field_plan(field: &Field) -> syn::Result<(syn::Ident, String, FieldAttrs)> {
             "#[colcha(atomic)] applies to Vec<T>",
         ));
     }
+    if attrs.rest {
+        if attrs.key || attrs.native || attrs.atomic || attrs.flat {
+            return Err(syn::Error::new_spanned(
+                field,
+                "a rest field cannot also be a key, native, atomic or flat field",
+            ));
+        }
+        if attrs.default.is_some() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "a rest field cannot declare a default",
+            ));
+        }
+        let Some((key, _value)) = map_types(&field.ty) else {
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[colcha(rest)] needs a BTreeMap<String, V> or HashMap<String, V>",
+            ));
+        };
+        if outer_type_name(&key).as_deref() != Some("String") {
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[colcha(rest)] needs a String key",
+            ));
+        }
+    }
     let segment = attrs
         .rename
         .clone()
@@ -184,6 +214,7 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
     let mut default_entries = Vec::new();
     let mut assertions = Vec::new();
     let mut key_fields = Vec::new();
+    let mut rest_fields = Vec::new();
     let mut has_native = false;
 
     for field in &fields.named {
@@ -191,11 +222,17 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
         if attrs.key {
             key_fields.push(ident.to_string());
         }
+        if attrs.rest {
+            rest_fields.push(segment.clone());
+        }
         let node = field_node(field, &attrs)?;
         entries.push(quote! {
             fields.insert(#segment.to_string(), #node);
         });
 
+        if attrs.rest {
+            continue;
+        }
         let ty = &field.ty;
         let default_entry = if attrs.native {
             has_native = true;
@@ -237,6 +274,17 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
             "a struct has at most one #[colcha(key)] field",
         ));
     }
+    if rest_fields.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            &data.fields,
+            "a struct has at most one #[colcha(rest)] field",
+        ));
+    }
+    let rest_field = if let Some(rest) = rest_fields.first() {
+        quote!(Some(#rest.to_string()))
+    } else {
+        quote!(None)
+    };
     let key_field = if let Some(key) = key_fields.first() {
         quote!(Some(#key))
     } else {
@@ -273,6 +321,7 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
                 let mut node = ::colcha::Node::structure();
                 node.fields = fields;
                 node.key_field = #node_key_field;
+                node.rest = #rest_field;
                 node.default = <Self as ::colcha::NodeOf>::default_value();
                 node
             }
@@ -521,6 +570,12 @@ fn variant_fields_tokens(
                 "a tagged union variant cannot declare a key field",
             ));
         }
+        if attrs.rest {
+            return Err(syn::Error::new_spanned(
+                field,
+                "a tagged union variant cannot declare a rest field",
+            ));
+        }
         if segment == tag {
             return Err(syn::Error::new_spanned(
                 field,
@@ -659,9 +714,43 @@ fn materialize_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Resul
         ));
     };
 
+    let mut declared = Vec::new();
     let mut field_exprs = Vec::new();
     for field in &fields.named {
         let (ident, segment, attrs) = field_plan(field)?;
+        declared.push(segment.clone());
+        if attrs.rest {
+            let ty = &field.ty;
+            field_exprs.push(quote! {
+                #ident: {
+                    if map.contains_key(#segment) {
+                        return Err(::colcha::Error::Materialize {
+                            path: path.clone(),
+                            message: format!(
+                                "field '{}' collects the unknown fields of the object",
+                                #segment
+                            ),
+                        });
+                    }
+                    let extras: ::std::collections::BTreeMap<
+                        ::std::string::String,
+                        ::colcha::Value,
+                    > = map
+                        .iter()
+                        .filter(|(key, _)| !DECLARED.contains(&key.as_str()))
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect();
+                    let field_value = ::colcha::Value::Map(extras);
+                    let field_path = path.clone();
+                    <#ty as ::colcha::Materialize>::materialize(
+                        &field_value,
+                        host,
+                        &field_path,
+                    )?
+                },
+            });
+            continue;
+        }
         let value = materialize_value_expr(&field.ty, &attrs)?;
         field_exprs.push(quote! {
             #ident: {
@@ -684,6 +773,7 @@ fn materialize_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Resul
                 host: &dyn ::colcha::NativeHost,
                 path: &::colcha::Path,
             ) -> ::std::result::Result<Self, ::colcha::Error> {
+                const DECLARED: &[&str] = &[#(#declared),*];
                 let map = match value {
                     ::colcha::Value::Map(map) => map,
                     other => {
@@ -809,6 +899,12 @@ fn materialize_tagged_enum(
                         return Err(syn::Error::new_spanned(
                             field,
                             "a tagged union variant cannot declare a key field",
+                        ));
+                    }
+                    if field_attrs.rest {
+                        return Err(syn::Error::new_spanned(
+                            field,
+                            "a tagged union variant cannot declare a rest field",
                         ));
                     }
                     if field_segment == tag {
@@ -1037,6 +1133,27 @@ fn generic_inner(ty: &Type, outer: &str) -> Option<Type> {
 
 fn is_vec(ty: &Type) -> bool {
     outer_type_name(ty).as_deref() == Some("Vec")
+}
+
+fn map_types(ty: &Type) -> Option<(Type, Type)> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != "BTreeMap" && segment.ident != "HashMap" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    let mut types = arguments.args.iter().filter_map(|argument| {
+        if let GenericArgument::Type(ty) = argument {
+            Some(ty.clone())
+        } else {
+            None
+        }
+    });
+    Some((types.next()?, types.next()?))
 }
 
 fn is_option(ty: &Type) -> bool {

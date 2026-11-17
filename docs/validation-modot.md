@@ -22,7 +22,7 @@ Ele não representa o config real sem extensões.
 - O parser aceita segmento nu ou string entre aspas. A string pode conter `.`, `/`, `*` e maiúsculas.
 - `Path::Display` cita segmentos que não são palavras nuas e junta os segmentos com `.`.
 - O schema é estático e vem de `T::schema()`.
-- Structs derivadas são fechadas.
+- Structs derivadas são fechadas. Um campo `#[colcha(rest)]` aceita chaves desconhecidas.
 - Enums derivados são unitários por padrão. `#[colcha(tag = "...")]` produz uma união tagueada com variantes nomeadas.
 - `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica.
 - `Raw` aceita qualquer `Value` concreto. Ele não tem caminhos filhos.
@@ -128,7 +128,7 @@ aceita `null`. `Vec<T>` exige `#[colcha(atomic)]`.
 `#Slot`, `#File` e as demais uniões que misturam string com struct continuam
 representáveis por `Raw` na v1. Um enum tagueado não aceita variante escalar.
 
-### P1: structs abertas
+### P1: structs abertas (resolvido)
 
 As structs derivadas são fechadas. O `lookup` rejeita campo desconhecido.
 
@@ -139,9 +139,14 @@ O modot usa abertura em vários lugares:
 - `#gtkSettingsShared` termina com `...`.
 - `options` é aberto por definição.
 
-Direção: adicionar `#[colcha(open)]` ou um campo `extras`. O schema ganha um nó
-de mapa para chaves não declaradas. A política de merge das extras precisa ser
-explícita, por chave.
+Resolução: `#[colcha(rest)]` em um campo `BTreeMap<String, V>` aceita chaves
+desconhecidas. A chave vira caminho no objeto e a dobra usa o nó de `V`; a
+materialização reúne as chaves no mapa. O segmento do campo rest não é gravável.
+`#PlaceConfig` e `#gtkSettingsShared` cabem nesse mecanismo, e `options` segue
+como mapa.
+
+O topo de `~/modot.cue` continua fora de escopo: `a.b` adiciona um campo ao
+schema, não um dado. A colcha tem schema estático.
 
 ### P1: semântica de listas
 
@@ -224,7 +229,8 @@ contrato de `SchemaId`.
 2. Folha `Raw` com `NodeOf` e `Materialize`. Feito. Desbloqueia `values`, `options` e
    `desktop.raw`.
 3. Enum com etiqueta externa. Feito. Desbloqueia `backup.actions` e `place.steps`.
-4. Struct ou mapa aberto. Desbloqueia topo, `options` e `#PlaceConfig`.
+4. Struct ou mapa aberto. Feito. Desbloqueia `#PlaceConfig`, `#gtkSettingsShared`
+   e `options`.
 5. Política de lista explícita. Desbloqueia `actions`, `cmd` e `ips`.
 6. `MinLen` e `Nullable`. Fecham validações do CUE.
 

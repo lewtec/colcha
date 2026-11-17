@@ -63,6 +63,7 @@ pub struct Node {
     pub natives: BTreeSet<String>,
     pub tag: Option<String>,
     pub variants: BTreeMap<String, Node>,
+    pub rest: Option<String>,
     pub optional: bool,
 }
 
@@ -79,6 +80,7 @@ impl Default for Node {
             natives: BTreeSet::new(),
             tag: None,
             variants: BTreeMap::new(),
+            rest: None,
             optional: false,
         }
     }
@@ -166,6 +168,12 @@ impl Node {
         self
     }
 
+    /// Element schema of the rest field, when the struct accepts unknown keys.
+    pub fn rest_element(&self) -> Option<&Node> {
+        let rest = self.rest.as_deref()?;
+        self.fields.get(rest)?.element.as_deref()
+    }
+
     /// Resolve a path to its schema node and reject writes to a derived key.
     pub fn lookup(&self, path: &Path) -> Result<&Node, String> {
         let mut node = self;
@@ -178,10 +186,18 @@ impl Node {
                     if node.key_field.as_deref() == Some(segment.as_str()) {
                         return Err(format!("field '{segment}' is derived from the path key"));
                     }
-                    node = node
-                        .fields
-                        .get(segment)
-                        .ok_or_else(|| format!("unknown field '{segment}'"))?;
+                    if node.rest.as_deref() == Some(segment.as_str()) {
+                        return Err(format!(
+                            "field '{segment}' collects the unknown fields of the object"
+                        ));
+                    }
+                    match node.fields.get(segment) {
+                        Some(child) => node = child,
+                        None => match node.rest_element() {
+                            Some(element) => node = element,
+                            None => return Err(format!("unknown field '{segment}'")),
+                        },
+                    }
                     index += 1;
                 }
                 NodeKind::List => {

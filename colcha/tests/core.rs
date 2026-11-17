@@ -623,6 +623,147 @@ fn raw_fields_have_no_child_paths() {
     assert!(matches!(error, Error::Path { .. }), "{error:?}");
 }
 
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct OpenConfig {
+    name: String,
+    #[colcha(rest)]
+    extra: BTreeMap<String, Raw>,
+}
+
+#[test]
+fn a_rest_field_collects_unknown_keys() {
+    let state = state_of::<OpenConfig>(
+        r#"
+        name: "app"
+        owner: "team"
+        "a.b": 3
+        nested: { x: true }
+        "#,
+        1,
+    );
+    let config = resolve::<OpenConfig>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(config.name, "app");
+    assert_eq!(
+        config.extra.get("owner").map(|raw| raw.as_value().clone()),
+        Some(Value::String("team".into()))
+    );
+    assert_eq!(
+        config.extra.get("a.b").map(|raw| raw.as_value().clone()),
+        Some(Value::Int(3))
+    );
+    let nested = config.extra.get("nested").expect("nested").as_value();
+    assert_eq!(
+        nested.as_map().and_then(|map| map.get("x")),
+        Some(&Value::Bool(true))
+    );
+}
+
+#[test]
+fn the_rest_segment_is_not_addressable() {
+    let error = parse::<OpenConfig>(
+        r#"
+        name: "app"
+        extra: {}
+        "#,
+        stamp(1),
+    )
+    .expect_err("rest segment");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct StringRest {
+    #[colcha(rest)]
+    labels: BTreeMap<String, String>,
+}
+
+#[test]
+fn a_rest_field_applies_the_element_type() {
+    let state = state_of::<StringRest>(r#"a: "x" b: "y""#, 1);
+    let labels = resolve::<StringRest>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(labels.labels.get("a").map(String::as_str), Some("x"));
+    assert_eq!(labels.labels.get("b").map(String::as_str), Some("y"));
+
+    let state = state_of::<StringRest>(r#"a: 1"#, 1);
+    let error = fold::<StringRest>(&state, &EmptyHost).expect_err("wrong type");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct HostEntry {
+    address: String,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct OpenHosts {
+    #[colcha(rest)]
+    hosts: BTreeMap<String, HostEntry>,
+}
+
+#[test]
+fn a_rest_field_folds_nested_fields_by_path() {
+    let state = state_of::<OpenHosts>(
+        r#"
+        alpha.address: "10.0.0.1"
+        beta.address: "10.0.0.2"
+        "#,
+        1,
+    );
+    let hosts = resolve::<OpenHosts>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(hosts.hosts["alpha"].address, "10.0.0.1");
+    assert_eq!(hosts.hosts["beta"].address, "10.0.0.2");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct OpenItem {
+    id: String,
+    #[colcha(rest)]
+    extra: BTreeMap<String, Raw>,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct OpenItems {
+    #[colcha(atomic)]
+    items: Vec<OpenItem>,
+}
+
+#[test]
+fn an_atomic_list_materializes_rest_fields() {
+    let state = state_of::<OpenItems>(r#"items: [{ id: "a", note: "n" }]"#, 1);
+    let items = resolve::<OpenItems>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(items.items[0].id, "a");
+    assert_eq!(
+        items.items[0]
+            .extra
+            .get("note")
+            .map(|raw| raw.as_value().clone()),
+        Some(Value::String("n".into()))
+    );
+}
+
+#[test]
+fn compact_preserves_rest_entries() {
+    let one = state_of::<OpenConfig>(
+        r#"
+        name: "app"
+        owner: "team"
+        "#,
+        1,
+    );
+    let two = state_of::<OpenConfig>(
+        r#"
+        name: "app"
+        owner: "platform"
+        tier: "gold"
+        "#,
+        2,
+    );
+    let state = one.union(&two);
+    let before = fold::<OpenConfig>(&state, &EmptyHost).expect("fold");
+    let after = fold::<OpenConfig>(&state.compact::<OpenConfig>(), &EmptyHost).expect("fold");
+    assert_eq!(before, after);
+}
+
 #[test]
 fn path_display_round_trips_arbitrary_segments() {
     let path = colcha::Path::from_segments(vec![

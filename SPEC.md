@@ -141,7 +141,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-02 | `Stamp` ordena por `clock` e desempata por `NodeId` em ordem lexicográfica; a ordem é total. | `Stamp` | comparação que ignora `NodeId` |
 | INV-03 | Todo `Fact` carrega `SchemaId` e é imutável. | `Fact` | fato sem identidade de schema |
 | INV-04 | `State::union` é comutativa, associativa e idempotente, e não faz I/O. | `State` | merge com lógica condicional; merge que abre recurso |
-| INV-05 | `State::insert` rejeita caminho malformado, caminho desconhecido no `Schema`, escrita em campo-chave e `SchemaId` diferente. | `State` | inserir direto no `BTreeSet` |
+| INV-05 | `State::insert` rejeita caminho malformado ou desconhecido, escrita em campo derivado e `SchemaId` diferente. | `State` | inserir direto no `BTreeSet` |
 | INV-06 | `State::compact` devolve estado cujo `fold` é igual ao do estado original para o mesmo `Schema`. | `State` | compactar sem `Schema`; remover fato de `Union` |
 | INV-07 | Depois da dobra, `Value` é concreto: não contém `Constraint`, não contém conflito e usa `BTreeMap` e `Vec`; ambos mantêm ordem determinística. | `Value` | devolver valor parcial; usar `HashMap` |
 | INV-08 | Uma constraint só estreita o conjunto aceito; meet de constraints incompatíveis é `Error::Fold`. | `Constraint` | aceitar valor que viola uma constraint |
@@ -164,6 +164,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-25 | Um nó `Raw` aceita qualquer `Value` concreto e não tem filhos; a materialização rejeita nativo. | `Raw`, `Node` | aceitar `raw.campo`; aceitar `Value::Native` em `Raw` |
 | INV-26 | `Union` lê o tag e escolhe a variante. | `fold`, `parse` | ignorar campo desconhecido |
 | INV-27 | O valor dobrado mantém o tag. | `Node` | aceitar `union.campo` |
+| INV-28 | Um nó com `rest` aceita chave desconhecida e a dobra no campo rest. | `lookup`, `fold` | gravar em `rest.x` |
 
 ## Errors
 
@@ -240,6 +241,7 @@ pub struct Node {
     pub natives: BTreeSet<String>,
     pub tag: Option<String>,
     pub variants: BTreeMap<String, Node>,
+    pub rest: Option<String>,
     pub optional: bool,
 }
 
@@ -363,6 +365,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 - Chaves são case-sensitive: `base0A` e `base0a` são segmentos diferentes.
 - Em campo `Raw`, `{ ... }` é um objeto literal e não um bloco de schema. O objeto aceita chaves e valores arbitrários.
 - Em campo `Union`, `{ ... }` é um objeto literal com o campo tag e os campos da variante.
+- Em struct com campo `rest`, uma chave desconhecida é um campo comum do objeto e entra no mapa rest. O segmento do campo rest é reservado.
 - `_core.Nome` fixa o tipo nativo do caminho. Em campo de tipo nativo único, o prefixo MAY ser omitido.
 - Lista de objetos em campo `Vec<T>` é normalizada para um caminho por campo-chave. Objeto em campo `Map<K,V>` usa a chave como segmento.
 
@@ -408,12 +411,28 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
 | `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |
+| `#[colcha(rest)]` | campo `BTreeMap<String, V>` ou `HashMap<String, V>` | recebe as chaves desconhecidas |
 | `#[colcha(default)]` | variante de enum | marca a variante default quando `#[default]` não é usado |
 | `#[colcha(rename = "...")]` | campo ou variante | troca o segmento do caminho |
 | `#[colcha(tag = "...")]` | enum raiz | representa o enum como união tagueada |
 | `#[colcha(version = N)]` | struct ou enum raiz | define `Schema::VERSION`; o default é 1 |
 
-`Vec<T>` sem `#[colcha(atomic)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Atributo desconhecido é erro de compilação.
+`Vec<T>` sem `#[colcha(atomic)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Um struct tem no máximo um campo `#[colcha(rest)]`. Atributo desconhecido é erro de compilação.
+
+### Open structs
+
+Um campo `#[colcha(rest)]` de tipo `BTreeMap<String, V>` abre a struct. Chaves não declaradas viram fatos no caminho do objeto e são dobradas com o nó de `V`. O valor dobrado mantém as chaves extras no nível do objeto; a materialização as reúne no campo rest. O segmento do campo rest não é gravável nem usável como chave literal.
+
+```rust
+#[derive(colcha::Schema, colcha::Materialize)]
+struct Place {
+    name: String,
+    #[colcha(rest)]
+    extra: std::collections::BTreeMap<String, Raw>,
+}
+```
+
+Com esse schema, `owner: "team"` no objeto é válido e o valor dobrado é `{ name: "...", owner: "team" }`. `extra: {...}` é `Error::Path`. Um campo rest dentro de variante de união tagueada é erro de compilação.
 
 ### Tagged unions
 
@@ -521,3 +540,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0007: segmentos de `Path` são strings case-sensitive. Rejeitados: normalização de caixa; `%`-encoding; chave de mapa como categoria opaca.
 - ADR-0008: `Raw` cobre valores heterogêneos. Rejeitados: traits em `Value`; caso especial de mapa; merge por chave dentro de `Raw`.
 - ADR-0009: uniões tagueadas em enums. Rejeitados: payload sem tag; tag adjacente; caminhos por variante; `serde` como formato.
+- ADR-0010: campo rest para structs abertas. Rejeitados: struct aberta implícita; ignorar chave desconhecida; aninhar extras no campo rest.
