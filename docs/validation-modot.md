@@ -171,13 +171,15 @@ Direção: definir uma política de lista por campo. Opções: atômica, por cha
 concatenação, união ordenada. Não usar `BTreeSet` como padrão para listas de
 valores.
 
-### P2: lista vazia
+### P2: lista vazia (resolvido)
 
-`Constraint` não tem tamanho mínimo. O modot exige `[_, ...]` em `cmd` e em
+`Constraint` não tinha tamanho mínimo. O modot exige `[_, ...]` em `cmd` e em
 outros lugares.
 
-Direção: adicionar `Constraint::MinLen(usize)`. A origem pode ser
-`#[colcha(min_len = 1)]` ou um wrapper `NonEmpty<T>`.
+Resolução: `Constraint::MinLen(usize)` e `#[colcha(min_len = N)]` em campo
+`Vec<T>`. A dobra avalia a lista final, então o default vazio e a lista por chave
+também passam pela regra. Um fato `[]` no caminho de lista por chave é aceito e
+representa a lista vazia.
 
 ### P2: ausente versus `null`
 
@@ -232,7 +234,8 @@ contrato de `SchemaId`.
 4. Struct ou mapa aberto. Feito. Desbloqueia `#PlaceConfig`, `#gtkSettingsShared`
    e `options`.
 5. Política de lista explícita. Desbloqueia `actions`, `cmd` e `ips`.
-6. `MinLen` e `Nullable`. Fecham validações do CUE.
+6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. `Nullable`
+   segue aberto.
 
 ## Recomendação
 

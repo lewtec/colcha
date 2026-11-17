@@ -246,6 +246,7 @@ pub enum Constraint {
     Greater(Value),
     Less(Value),
     Regex(String),
+    MinLen(usize),
     OneOf(Vec<Value>),
     NativeOneOf(Vec<String>),
 }
@@ -279,6 +280,10 @@ impl Constraint {
                 })
             }
             Constraint::OneOf(values) => Ok(values.iter().any(|candidate| candidate == value)),
+            Constraint::MinLen(minimum) => Ok(match value {
+                Value::List(items) => items.len() >= *minimum,
+                _ => false,
+            }),
             Constraint::NativeOneOf(names) => Ok(match value {
                 Value::Native { name, .. } => names.iter().any(|allowed| allowed == name),
                 Value::String(name) => names.iter().any(|allowed| allowed == name),

@@ -55,12 +55,21 @@ fn fold_node(
             return Ok(node.default.clone().unwrap_or(Value::Null));
         }
         match node.kind {
-            NodeKind::Leaf | NodeKind::Raw | NodeKind::Union => {}
-            _ => {
+            NodeKind::Leaf | NodeKind::Raw | NodeKind::Union | NodeKind::Native => {}
+            NodeKind::Struct => {
+                if node.default.is_none() {
+                    return Err(Error::fold(
+                        path.clone(),
+                        "required field has no facts and no default",
+                    ));
+                }
+            }
+            NodeKind::Map | NodeKind::List => {
                 if let Some(default) = &node.default {
+                    ensure_constraints(node, path, default)?;
                     return Ok(default.clone());
                 }
-                if matches!(node.kind, NodeKind::Struct | NodeKind::Map)
+                if matches!(node.kind, NodeKind::Map)
                     || (node.kind == NodeKind::List && node.key_field.is_some())
                 {
                     return Err(Error::fold(
@@ -323,7 +332,9 @@ fn complete_list(node: &Node, path: &Path, value: Option<&Value>) -> Result<Valu
             .map_err(|error| Error::fold(path.clone(), error.to_string()))?;
         result.push(complete_value(element, &child, Some(item))?);
     }
-    Ok(Value::List(result))
+    let value = Value::List(result);
+    ensure_constraints(node, path, &value)?;
+    Ok(value)
 }
 
 fn complete_keyed_list(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
@@ -376,7 +387,9 @@ fn complete_keyed_list(node: &Node, path: &Path, value: Option<&Value>) -> Resul
             ));
         }
     }
-    Ok(Value::List(entries.into_values().collect()))
+    let value = Value::List(entries.into_values().collect());
+    ensure_constraints(node, path, &value)?;
+    Ok(value)
 }
 
 fn complete_map(node: &Node, path: &Path, value: Option<&Value>) -> Result<Value, Error> {
@@ -559,7 +572,9 @@ fn fold_list(
                 && matches!(&fact.kind, FactKind::Candidate(Value::List(items)) if items.is_empty())
         });
         if direct_candidate.is_some() {
-            return Ok(Value::List(Vec::new()));
+            let value = Value::List(Vec::new());
+            ensure_constraints(node, path, &value)?;
+            return Ok(value);
         }
         if node.optional {
             return Ok(Value::Null);
@@ -584,7 +599,9 @@ fn fold_list(
             Some(&key),
         )?);
     }
-    Ok(Value::List(values))
+    let value = Value::List(values);
+    ensure_constraints(node, path, &value)?;
+    Ok(value)
 }
 
 fn fold_map(
@@ -850,6 +867,19 @@ fn satisfies(value: &Value, constraints: &[Constraint], path: &Path) -> Result<b
         }
     }
     Ok(true)
+}
+
+fn ensure_constraints(node: &Node, path: &Path, value: &Value) -> Result<(), Error> {
+    if satisfies(value, &node.constraints, path)? {
+        return Ok(());
+    }
+    Err(Error::fold(
+        path.clone(),
+        format!(
+            "a value of type {} does not satisfy the field constraints",
+            value.type_name()
+        ),
+    ))
 }
 
 fn check_constraints(constraints: &[Constraint], path: &Path) -> Result<(), Error> {

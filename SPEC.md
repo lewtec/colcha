@@ -165,6 +165,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-26 | `Union` lê o tag e escolhe a variante. | `fold`, `parse` | ignorar campo desconhecido |
 | INV-27 | O valor dobrado mantém o tag. | `Node` | aceitar `union.campo` |
 | INV-28 | Um nó com `rest` aceita chave desconhecida e a dobra no campo rest. | `lookup`, `fold` | gravar em `rest.x` |
+| INV-29 | `MinLen` é avaliado sobre a lista dobrada, inclusive default e lista por chave. | `fold`, `Constraint` | validar só candidato atômico |
 
 ## Errors
 
@@ -275,6 +276,7 @@ pub enum Constraint {
     Greater(Value),
     Less(Value),
     Regex(String),
+    MinLen(usize),
     OneOf(Vec<Value>),
     NativeOneOf(Vec<String>),
 }
@@ -400,7 +402,7 @@ Default natural é `*default | type`. O derive preenche `Node.default` via `Node
 
 Tombstone é um fato `FactKind::Tombstone`. Ele absorve todo fato no mesmo caminho e em caminhos descendentes quando o `stamp` do fato é menor ou igual ao `stamp` do tombstone. Um fato posterior com `stamp` maior ressuscita o caminho.
 
-Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra preenche o campo-chave no map de cada elemento. A dobra de nativo valida os nomes dos argumentos contra `Native::args` e rejeita argumento desconhecido com `Error::Fold`.
+Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra preenche o campo-chave no map de cada elemento. Um fato `[]` no caminho da lista é aceito e representa a lista vazia. A dobra de nativo valida os nomes dos argumentos contra `Native::args` e rejeita argumento desconhecido com `Error::Fold`.
 
 ### Derive attributes
 
@@ -408,6 +410,7 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 |-----------|------------|------|
 | `#[colcha(key)]` | campo `String` de elemento de `Vec<T>` | identifica o campo-chave; a dobra preenche o valor na materialização; escrita no caminho é `Error::Path` |
 | `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
+| `#[colcha(min_len = N)]` | campo `Vec<T>` | adiciona `Constraint::MinLen(N)`, avaliado na lista dobrada |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
 | `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |

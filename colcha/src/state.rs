@@ -44,10 +44,16 @@ impl State {
                     ));
                 }
                 NodeKind::List if node.key_field.is_some() => {
-                    return Err(Error::path(
-                        fact.path.to_string(),
-                        "a keyed list is written through its keys",
-                    ));
+                    let empty = matches!(
+                        &fact.kind,
+                        FactKind::Candidate(Value::List(items)) if items.is_empty()
+                    );
+                    if !empty {
+                        return Err(Error::path(
+                            fact.path.to_string(),
+                            "a keyed list is written through its keys",
+                        ));
+                    }
                 }
                 _ => {}
             },

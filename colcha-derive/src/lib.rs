@@ -29,6 +29,7 @@ struct FieldAttrs {
     flat: bool,
     native: bool,
     rest: bool,
+    min_len: Option<usize>,
     default: Option<Lit>,
     rename: Option<String>,
 }
@@ -45,6 +46,11 @@ fn field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 Ok(())
             } else if meta.path.is_ident("rest") {
                 attrs.rest = true;
+                Ok(())
+            } else if meta.path.is_ident("min_len") {
+                let value = meta.value()?;
+                let literal = value.parse::<LitInt>()?;
+                attrs.min_len = Some(literal.base10_parse()?);
                 Ok(())
             } else if meta.path.is_ident("atomic") {
                 attrs.atomic = true;
@@ -147,6 +153,12 @@ fn field_plan(field: &Field) -> syn::Result<(syn::Ident, String, FieldAttrs)> {
         return Err(syn::Error::new_spanned(
             field,
             "#[colcha(atomic)] applies to Vec<T>",
+        ));
+    }
+    if attrs.min_len.is_some() && vec_element_inside_option(&field.ty).is_none() {
+        return Err(syn::Error::new_spanned(
+            field,
+            "#[colcha(min_len = N)] applies to Vec<T>",
         ));
     }
     if attrs.rest {
@@ -675,6 +687,12 @@ fn field_node(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
         statements.push(quote!(node.policy = ::colcha::FoldPolicy::Atomic;));
         statements.push(quote!(node.key_field = None;));
         statements.push(quote!(node.kind = ::colcha::NodeKind::List;));
+    }
+    if let Some(minimum) = attrs.min_len {
+        statements.push(quote!(
+            node.constraints
+                .push(::colcha::Constraint::MinLen(#minimum));
+        ));
     }
     if let Some(default) = &attrs.default {
         let value = lit_to_value(default)?;

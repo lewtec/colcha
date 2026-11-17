@@ -1114,6 +1114,83 @@ fn an_atomic_list_of_tagged_unions_rejects_unknown_fields() {
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]
+struct NonEmptyCmd {
+    #[colcha(atomic)]
+    #[colcha(min_len = 1)]
+    cmd: Vec<String>,
+}
+
+#[test]
+fn a_min_len_accepts_an_atomic_list_with_enough_items() {
+    let state = state_of::<NonEmptyCmd>(r#"cmd: ["go", "test"]"#, 1);
+    let cmd = resolve::<NonEmptyCmd>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(cmd.cmd, vec!["go".to_string(), "test".to_string()]);
+}
+
+#[test]
+fn a_min_len_rejects_an_empty_atomic_list() {
+    let state = state_of::<NonEmptyCmd>(r#"cmd: []"#, 1);
+    let error = fold::<NonEmptyCmd>(&state, &EmptyHost).expect_err("empty list");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[test]
+fn a_min_len_rejects_the_empty_default() {
+    let error = fold::<NonEmptyCmd>(&State::empty(), &EmptyHost).expect_err("empty default");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Tool {
+    #[colcha(key)]
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Tools {
+    #[colcha(min_len = 1)]
+    tools: Vec<Tool>,
+}
+
+#[test]
+fn a_min_len_accepts_a_keyed_list_with_one_element() {
+    let state = state_of::<Tools>(r#"tools: [{ name: "rft", path: "/bin/rft" }]"#, 1);
+    let tools = resolve::<Tools>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(tools.tools.len(), 1);
+    assert_eq!(tools.tools[0].name, "rft");
+    assert_eq!(tools.tools[0].path, "/bin/rft");
+}
+
+#[test]
+fn a_min_len_rejects_an_empty_keyed_list() {
+    let error = fold::<Tools>(&state_of::<Tools>(r#"tools: []"#, 1), &EmptyHost)
+        .expect_err("empty keyed list");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+
+    let error = fold::<Tools>(&State::empty(), &EmptyHost).expect_err("missing keyed list");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct NonEmptySteps {
+    #[colcha(atomic)]
+    #[colcha(min_len = 1)]
+    steps: Vec<Action>,
+}
+
+#[test]
+fn a_min_len_applies_to_a_list_of_tagged_unions() {
+    let state = state_of::<NonEmptySteps>(r#"steps: [{ kind: "start", service: "api" }]"#, 1);
+    let steps = resolve::<NonEmptySteps>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(steps.steps.len(), 1);
+
+    let state = state_of::<NonEmptySteps>(r#"steps: []"#, 1);
+    let error = fold::<NonEmptySteps>(&state, &EmptyHost).expect_err("empty list");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
 #[colcha(tag = "kind")]
 enum DefaultedAction {
     #[colcha(default)]

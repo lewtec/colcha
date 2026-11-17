@@ -156,6 +156,8 @@ Each type answers one question: does it have a natural default? If yes, the fiel
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
+Add `#[colcha(min_len = N)]` to a `Vec<T>` field to require at least `N` items. The constraint applies to the folded list, so the empty natural default fails when `N > 0`. An explicit empty keyed list, written as `tools: []`, is a valid fact and also fails the constraint.
+
 ## Native types
 
 A native field uses `#[colcha(native)]` and implements `NativeType`. The host registers `Native` specs and returns a `NativeHandle` from `build`. The fold applies inline arguments against `Native::args` and rejects unknown arguments.
