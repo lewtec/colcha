@@ -27,7 +27,6 @@ struct FieldAttrs {
     key: bool,
     atomic: bool,
     flat: bool,
-    union: bool,
     native: bool,
     default: Option<Lit>,
     rename: Option<String>,
@@ -48,9 +47,6 @@ fn field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 Ok(())
             } else if meta.path.is_ident("flat") {
                 attrs.flat = true;
-                Ok(())
-            } else if meta.path.is_ident("union") {
-                attrs.union = true;
                 Ok(())
             } else if meta.path.is_ident("native") {
                 attrs.native = true;
@@ -310,9 +306,6 @@ fn field_node(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
     let mut statements = Vec::new();
     if attrs.flat {
         statements.push(quote!(node.policy = ::colcha::FoldPolicy::Flat;));
-    }
-    if attrs.union {
-        statements.push(quote!(node.policy = ::colcha::FoldPolicy::Union;));
     }
     if attrs.atomic {
         statements.push(quote!(node.policy = ::colcha::FoldPolicy::Atomic;));

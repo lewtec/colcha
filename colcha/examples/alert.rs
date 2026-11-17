@@ -28,7 +28,6 @@ struct Alert {
     severity: Severity,
     #[colcha(native)]
     notify: Webhook,
-    #[colcha(union)]
     tags: BTreeSet<String>,
     #[colcha(default = false)]
     muted: bool,

@@ -30,7 +30,6 @@ use colcha::{Materialize, NodeId, Schema, Stamp, State, parse, resolve};
 struct Alert {
     name: String,
     threshold: f64,
-    #[colcha(union)]
     tags: BTreeSet<String>,
     muted: bool,
 }

@@ -24,7 +24,6 @@ struct Service {
     threshold: f64,
     #[colcha(default = true)]
     enabled: bool,
-    #[colcha(union)]
     tags: Option<BTreeSet<String>>,
     #[colcha(atomic)]
     order: Option<Vec<String>>,

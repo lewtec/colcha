@@ -356,7 +356,7 @@ segment  = ( "a".."z" | "0".."9" ) { "a".."z" | "0".."9" | "_" | "-" } ;
 |--------|----------|------|
 | `Lww` | escalar comum, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
 | `Flat` | campo anotado `#[colcha(flat)]`, discriminante de enum | todos os candidatos válidos MUST ser iguais; qualquer diferença é `Error::Conflict` |
-| `Union` | `BTreeSet<T>`, `HashSet<T>`, `#[colcha(union)]` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
+| `Union` | `BTreeSet<T>`, `HashSet<T>` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
 | `Atomic` | `Vec<T>` anotado `#[colcha(atomic)]` | a lista inteira é um valor; vence o maior `Stamp`; empate com listas diferentes é `Error::Conflict` |
 | `Native` | campo nativo | escolhe um nome permitido; nomes diferentes são `Error::Conflict`; dobra os args contra `Native::args`, aplica `Native::coerce` e produz `Value::Native` |
 
@@ -376,7 +376,6 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 | `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
-| `#[colcha(union)]` | campo de conjunto | usa `FoldPolicy::Union` |
 | `#[colcha(default = <literal>)]` | campo | preenche `Node.default` com o literal |
 | `#[colcha(rename = "...")]` | campo | troca o segmento do caminho |
 | `#[colcha(version = N)]` | struct raiz | define `Schema::VERSION`; o default é 1 |
