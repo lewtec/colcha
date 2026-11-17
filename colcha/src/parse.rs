@@ -134,6 +134,11 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         if self.eat_char('{') {
+            if node.kind == NodeKind::Raw {
+                let value = self.parse_object_body(depth)?;
+                self.emit_value(&path, node, value, EmitKind::Candidate)?;
+                return Ok(());
+            }
             if node.kind == NodeKind::Leaf {
                 return Err(Error::path(
                     path.to_string(),
@@ -262,6 +267,13 @@ impl<'a> Parser<'a> {
         }
 
         if self.peek_char() == Some('{') {
+            if node.kind == NodeKind::Raw {
+                let value = self.parse_object(depth)?;
+                return Ok(Expr {
+                    candidates: vec![value],
+                    ..Expr::default()
+                });
+            }
             let mut inner = BTreeSet::new();
             self.expect_char('{')?;
             self.parse_config(path, depth + 1, &mut inner)?;
@@ -356,10 +368,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_object(&mut self, depth: usize) -> Result<Value, Error> {
+        self.expect_char('{')?;
+        self.parse_object_body(depth)
+    }
+
+    fn parse_object_body(&mut self, depth: usize) -> Result<Value, Error> {
         if depth > MAX_DEPTH {
             return Err(self.error(format!("nesting is deeper than {MAX_DEPTH}")));
         }
-        self.expect_char('{')?;
         let mut map = BTreeMap::new();
         loop {
             self.skip_trivia();
@@ -517,9 +533,10 @@ impl<'a> Parser<'a> {
             .lookup(&child)
             .map_err(|reason| Error::path(child.to_string(), reason))?;
         match (&value, node.kind) {
-            (Value::Map(_), NodeKind::Struct | NodeKind::Map | NodeKind::Native) => {
-                self.emit_value(&child, node, value, kind)
-            }
+            (
+                Value::Map(_),
+                NodeKind::Struct | NodeKind::Map | NodeKind::Native | NodeKind::Raw,
+            ) => self.emit_value(&child, node, value, kind),
             (Value::List(_), NodeKind::List) => self.emit_value(&child, node, value, kind),
             (Value::Map(_), _) => Err(Error::path(
                 child.to_string(),

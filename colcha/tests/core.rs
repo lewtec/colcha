@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use colcha::{
     EmptyHost, Error, FactKind, Materialize, Native, NativeHandle, NativeHost, NativeRegistry,
-    NativeType, NodeId, Schema, Stamp, State, Value, fold, parse, resolve,
+    NativeType, NodeId, Raw, Schema, Stamp, State, Value, fold, parse, resolve,
 };
 
 fn stamp(clock: u64) -> Stamp {
@@ -527,6 +527,99 @@ fn renamed_fields_stay_case_sensitive() {
     assert_eq!(palette.base_0a, "yellow");
 
     let error = parse::<Palette>(r#"base0a: "lower""#, stamp(1)).expect_err("unknown field");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct RawConfig {
+    metadata: BTreeMap<String, Raw>,
+    blob: Option<Raw>,
+}
+
+#[test]
+fn raw_fields_accept_any_concrete_value() {
+    let state = state_of::<RawConfig>(
+        r#"
+        metadata: {
+            "base0A": { hex: "yellow", rank: 1 }
+            "org/gnome/desktop/interface": { "gtk-theme": "adw", flags: [1, true, null] }
+        }
+        blob: { enabled: true, items: [{ name: "x" }, 3] }
+        "#,
+        1,
+    );
+    let config = resolve::<RawConfig>(&state, &EmptyHost).expect("resolve");
+
+    let yellow = config.metadata.get("base0A").expect("yellow").as_value();
+    let yellow = yellow.as_map().expect("map");
+    assert_eq!(yellow.get("hex"), Some(&Value::String("yellow".into())));
+    assert_eq!(yellow.get("rank"), Some(&Value::Int(1)));
+
+    let dconf = config
+        .metadata
+        .get("org/gnome/desktop/interface")
+        .expect("dconf")
+        .as_value();
+    assert_eq!(
+        dconf.as_map().and_then(|map| map.get("gtk-theme")),
+        Some(&Value::String("adw".into()))
+    );
+
+    let blob = config.blob.expect("blob").into_inner();
+    assert_eq!(
+        blob.as_map().and_then(|map| map.get("enabled")),
+        Some(&Value::Bool(true))
+    );
+    assert_eq!(
+        blob.as_map().and_then(|map| map.get("items")),
+        Some(&Value::List(vec![
+            Value::Map(BTreeMap::from([
+                ("name".into(), Value::String("x".into()),)
+            ])),
+            Value::Int(3),
+        ]))
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct RawBlock {
+    blob: Raw,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct RawItem {
+    #[colcha(key)]
+    name: String,
+    payload: Raw,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct RawItems {
+    items: Vec<RawItem>,
+}
+
+#[test]
+fn raw_fields_work_inside_keyed_lists() {
+    let state = state_of::<RawItems>(r#"items: [{ name: "a", payload: { x: 1, y: [true] } }]"#, 1);
+    let items = resolve::<RawItems>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(items.items.len(), 1);
+    assert_eq!(items.items[0].name, "a");
+    let payload = items.items[0].payload.as_value().as_map().expect("map");
+    assert_eq!(payload.get("x"), Some(&Value::Int(1)));
+}
+
+#[test]
+fn raw_fields_accept_block_shorthand() {
+    let state = state_of::<RawBlock>(r#"blob { a: 1 b: [true] }"#, 1);
+    let config = resolve::<RawBlock>(&state, &EmptyHost).expect("resolve");
+    let blob = config.blob.as_value().as_map().expect("map");
+    assert_eq!(blob.get("a"), Some(&Value::Int(1)));
+    assert_eq!(blob.get("b"), Some(&Value::List(vec![Value::Bool(true)])));
+}
+
+#[test]
+fn raw_fields_have_no_child_paths() {
+    let error = parse::<RawConfig>(r#"blob.enabled: true"#, stamp(1)).expect_err("raw child");
     assert!(matches!(error, Error::Path { .. }), "{error:?}");
 }
 

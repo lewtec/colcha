@@ -3,11 +3,23 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::error::Error;
 use crate::native::NativeHost;
 use crate::path::Path;
-use crate::value::Value;
+use crate::value::{Raw, Value};
 
 /// Turn a folded value into the Rust type it represents.
 pub trait Materialize: Sized {
     fn materialize(value: &Value, host: &dyn NativeHost, path: &Path) -> Result<Self, Error>;
+}
+
+impl Materialize for Raw {
+    fn materialize(value: &Value, _host: &dyn NativeHost, path: &Path) -> Result<Raw, Error> {
+        if value.contains_native() {
+            return Err(Error::materialize(
+                path.clone(),
+                "a raw value cannot contain a native value",
+            ));
+        }
+        Ok(Raw(value.clone()))
+    }
 }
 
 impl Materialize for String {

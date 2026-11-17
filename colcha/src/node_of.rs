@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::schema::{Constraint, FoldPolicy, Node};
-use crate::value::Value;
+use crate::value::{Raw, Value};
 
 /// Derive-time bridge from a Rust field type to its schema node.
 #[doc(hidden)]
@@ -19,6 +19,12 @@ pub trait NodeOf {
 impl NodeOf for String {
     fn node() -> Node {
         Node::leaf(FoldPolicy::Lww).with_constraint(Constraint::type_name("string"))
+    }
+}
+
+impl NodeOf for Raw {
+    fn node() -> Node {
+        Node::raw()
     }
 }
 

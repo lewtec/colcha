@@ -55,6 +55,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Open lists | webapp | `extra_flags: [...string]` | partial |
 | Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | yes |
 | Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
+| Heterogeneous values | base16-gtk, schema | `values` mixes strings, ints, and nested maps | yes (`Raw`) |
 | Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | partial |
 | Lists of structs | schema | `backup.actions` keeps input order | partial |
 | Comprehensions | schema | `core:place` expands `items` into `file.home` | no |

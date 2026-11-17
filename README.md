@@ -159,6 +159,22 @@ Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
 A native field uses `#[colcha(native)]` and implements `NativeType`. The host registers `Native` specs and returns a `NativeHandle` from `build`. The fold applies inline arguments against `Native::args` and rejects unknown arguments.
 
+## Raw values
+
+A `Raw` field accepts any concrete value. Use it for heterogeneous maps and for data whose shape the Rust type does not model.
+
+```rust
+use colcha::Raw;
+use std::collections::BTreeMap;
+
+#[derive(colcha::Schema, colcha::Materialize)]
+struct File {
+    values: BTreeMap<String, Raw>,
+}
+```
+
+The DSL accepts an object literal after `values:`. `Raw` has no child paths. The parser rejects `values.foo.bar`; `values.foo` addresses one map entry. `Raw` materialization rejects native values.
+
 ## Tests
 
 ```text

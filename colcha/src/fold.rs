@@ -55,7 +55,7 @@ fn fold_node(
             return Ok(node.default.clone().unwrap_or(Value::Null));
         }
         match node.kind {
-            NodeKind::Leaf => {}
+            NodeKind::Leaf | NodeKind::Raw => {}
             _ => {
                 if let Some(default) = &node.default {
                     return Ok(default.clone());
@@ -77,6 +77,7 @@ fn fold_node(
         NodeKind::List => fold_list(node, path, facts, registry),
         NodeKind::Map => fold_map(node, path, facts, registry),
         NodeKind::Leaf => fold_leaf(node, path, facts, None),
+        NodeKind::Raw => fold_leaf(node, path, facts, None),
         NodeKind::Native => fold_native(node, path, facts, registry),
     }
 }

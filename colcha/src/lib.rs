@@ -34,9 +34,9 @@ pub use crate::resolve::resolve;
 pub use crate::schema::{Constraint, FoldPolicy, Native, Node, NodeKind, Schema, SchemaId, scalar};
 pub use crate::stamp::{NodeId, Stamp};
 pub use crate::state::State;
-pub use crate::value::{Float, Value};
+pub use crate::value::{Float, Raw, Value};
 
 /// Common imports for deriving and using a schema.
 pub mod prelude {
-    pub use crate::{Materialize, NodeOf, Schema, State};
+    pub use crate::{Materialize, NodeOf, Raw, Schema, State};
 }

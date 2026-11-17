@@ -128,4 +128,47 @@ impl Value {
             _ => None,
         }
     }
+
+    /// True when this value or a descendant is a native value.
+    pub fn contains_native(&self) -> bool {
+        match self {
+            Value::Native { .. } => true,
+            Value::List(values) => values.iter().any(Value::contains_native),
+            Value::Map(values) => values.values().any(Value::contains_native),
+            _ => false,
+        }
+    }
+}
+
+/// Opaque concrete value for heterogeneous configuration.
+///
+/// A `Raw` field accepts any concrete value. The host validates its shape.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct Raw(pub Value);
+
+impl Raw {
+    pub fn new(value: Value) -> Raw {
+        Raw(value)
+    }
+
+    pub fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> Value {
+        self.0
+    }
+}
+
+impl From<Value> for Raw {
+    fn from(value: Value) -> Raw {
+        Raw(value)
+    }
+}
+
+impl From<Raw> for Value {
+    fn from(value: Raw) -> Value {
+        value.0
+    }
 }

@@ -42,6 +42,7 @@ pub enum FoldPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum NodeKind {
     Leaf,
+    Raw,
     Struct,
     List,
     Map,
@@ -90,6 +91,14 @@ impl Node {
     pub fn structure() -> Node {
         Node {
             kind: NodeKind::Struct,
+            ..Node::default()
+        }
+    }
+
+    /// A leaf that accepts any concrete value.
+    pub fn raw() -> Node {
+        Node {
+            kind: NodeKind::Raw,
             ..Node::default()
         }
     }
@@ -181,6 +190,9 @@ impl Node {
                 }
                 NodeKind::Leaf => {
                     return Err(format!("'{segment}' is below a scalar leaf"));
+                }
+                NodeKind::Raw => {
+                    return Err(format!("'{segment}' is below a raw leaf"));
                 }
                 NodeKind::Native => {
                     // Native argument paths are validated when the registry is known.

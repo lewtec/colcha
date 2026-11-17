@@ -119,6 +119,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `Fact` | sim | valor | não | `Error::Path` na inserção | inserir sem `Schema` |
 | `FactKind` | sim | valor (`Candidate`, `Default`, `Constraint`, `Tombstone`) | não | `Error::Fold` na combinação inválida | usar `Tombstone` para apagar constraint de schema |
 | `Value` | sim | valor concreto | não | `Error::Fold` se não for concreto | conter `Constraint` e conflito depois da dobra |
+| `Raw` | sim | `Value` opaco | não | `Error::Materialize` com nativo | usar `Raw` para ignorar o tipo declarado |
 | `Float` | sim | valor `f64` com ordem total por bits | não | `Error::Fold` em NaN | comparar com o `PartialOrd` de `f64` |
 | `Constraint` | sim | valor; predicado | não | `Error::Fold` se o meet for vazio | afrouxar outra constraint |
 | `State` | sim | valor; `BTreeSet<Fact>` | sim, por `insert`; `union` e `compact` devolvem novo | vazio é válido | editar o `BTreeSet` fora de `insert` |
@@ -160,6 +161,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-22 | O mesmo bloco não pode declarar a mesma chave duas vezes. Chaves são case-sensitive. | parser | aceitar `Foo` e `foo` como a mesma chave |
 | INV-23 | `Float` rejeita NaN e ordena pelos bits; a ordem é total e determinística. | `Float` | usar `PartialOrd` de `f64` no `BTreeSet` |
 | INV-24 | `Path::Display` escreve uma forma que `Path::parse` reconstrói; segmentos fora da forma nua são citados com escapes JSON. | `Path` | escrever segmento ambíguo sem aspas |
+| INV-25 | Um nó `Raw` aceita qualquer `Value` concreto e não tem filhos; a materialização rejeita nativo. | `Raw`, `Node` | aceitar `raw.campo`; aceitar `Value::Native` em `Raw` |
 
 ## Errors
 
@@ -239,6 +241,7 @@ pub struct Node {
 
 pub enum NodeKind {
     Leaf,
+    Raw,
     Struct,
     List,
     Map,
@@ -255,6 +258,8 @@ pub enum Value {
     Map(BTreeMap<String, Value>),
     Native { name: String, args: Box<Value> },
 }
+
+pub struct Raw(pub Value);
 
 pub enum Constraint {
     Type(String),
@@ -351,6 +356,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 - `a.b.c: v` equivale a `a: { b: { c: v } }`.
 - Um segmento é uma palavra nua ou uma string entre aspas. A string aceita qualquer caractere, incluindo `.`, `/`, `*` e maiúsculas.
 - Chaves são case-sensitive: `base0A` e `base0a` são segmentos diferentes.
+- Em campo `Raw`, `{ ... }` é um objeto literal e não um bloco de schema. O objeto aceita chaves e valores arbitrários.
 - `_core.Nome` fixa o tipo nativo do caminho. Em campo de tipo nativo único, o prefixo MAY ser omitido.
 - Lista de objetos em campo `Vec<T>` é normalizada para um caminho por campo-chave. Objeto em campo `Map<K,V>` usa a chave como segmento.
 
@@ -358,7 +364,7 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 
 | Policy | Used for | Rule |
 |--------|----------|------|
-| `Lww` | escalar comum, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
+| `Lww` | escalar comum, `Raw`, `Option<T>` | entre candidatos válidos, vence o maior `Stamp`; empate com valores diferentes é `Error::Conflict` |
 | `Flat` | campo anotado `#[colcha(flat)]`, discriminante de enum | todos os candidatos válidos MUST ser iguais; qualquer diferença é `Error::Conflict` |
 | `Union` | `BTreeSet<T>`, `HashSet<T>` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
 | `Atomic` | `Vec<T>` anotado `#[colcha(atomic)]` | a lista inteira é um valor; vence o maior `Stamp`; empate com listas diferentes é `Error::Conflict` |
@@ -484,3 +490,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0005: estado inválido é fail-closed. Rejeitados: fallback silencioso; marcação sem bloqueio.
 - ADR-0006: override por folha e compactação explícita. Rejeitados: override por struct; compactação automática.
 - ADR-0007: segmentos de `Path` são strings case-sensitive. Rejeitados: normalização de caixa; `%`-encoding; chave de mapa como categoria opaca.
+- ADR-0008: `Raw` cobre valores heterogêneos. Rejeitados: traits em `Value`; caso especial de mapa; merge por chave dentro de `Raw`.

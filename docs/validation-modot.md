@@ -25,7 +25,8 @@ Ele não representa o config real sem extensões.
 - Structs derivadas são fechadas.
 - Enums derivados têm apenas variantes unitárias.
 - `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica.
-- `Value` não é um tipo de campo. Ele não implementa `NodeOf` nem `Materialize`.
+- `Raw` aceita qualquer `Value` concreto. Ele não tem caminhos filhos.
+- `Value` não é um tipo de campo direto. Use `Raw`; ele implementa `NodeOf` e `Materialize`.
 
 ## O que mapeia diretamente
 
@@ -88,7 +89,7 @@ codificação é reversível, então `a/b` (um segmento) e `a.b` (dois segmentos
 colidem. Testes em `colcha/tests/core.rs` cobrem `base0A`, `base0a`, barras,
 pontos e round-trip de `Display`.
 
-### P0: valores arbitrários
+### P0: valores arbitrários (resolvido)
 
 `file.<profile>.<path>.values` e `options` carregam valores heterogêneos.
 
@@ -99,13 +100,15 @@ pontos e round-trip de `Display`.
 - `file.<profile>.<path>` é uma união de `#FileLines | #FileText | #FileRef |
   #FileLink | #FileStructured`.
 
-A colcha não tem um tipo de folha para JSON arbitrário.
-`BTreeMap<String, Value>` não compila, porque `Value` não implementa `NodeOf`
+A colcha não tinha um tipo de folha para JSON arbitrário.
+`BTreeMap<String, Value>` não compilava, porque `Value` não implementa `NodeOf`
 nem `Materialize`.
 
-Direção: criar um wrapper `Raw` ou `Json`. Ele implementa `NodeOf` e
-`Materialize`. O nó de schema é uma folha sem constraint de tipo. O fold aceita
-escalar, lista e mapa. O host valida o conteúdo depois, por `type`.
+Resolução: `Raw` é um newtype sobre `Value`. Ele implementa `NodeOf` com
+`NodeKind::Raw` e `Materialize`. O parser aceita objeto literal em campo `Raw`.
+O fold usa LWW no valor inteiro. `Raw` não tem caminhos filhos e rejeita valor
+nativo na materialização. `BTreeMap<String, Raw>` compila e cobre `values` e
+`options`.
 
 ### P1: uniões com payload
 
@@ -213,7 +216,7 @@ contrato de `SchemaId`.
 
 1. Chaves opacas com caixa preservada. Feito. Desbloqueia `file.home`, `drivers`,
    `base0A`, `dconf` e `$schema`.
-2. Folha `Raw` com `NodeOf` e `Materialize`. Desbloqueia `values`, `options` e
+2. Folha `Raw` com `NodeOf` e `Materialize`. Feito. Desbloqueia `values`, `options` e
    `desktop.raw`.
 3. Enum com etiqueta externa. Desbloqueia `backup.actions` e `place.steps`.
 4. Struct ou mapa aberto. Desbloqueia topo, `options` e `#PlaceConfig`.

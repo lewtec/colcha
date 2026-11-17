@@ -52,7 +52,7 @@ impl State {
                 _ => {}
             },
             FactKind::Constraint(_) => {
-                if !matches!(node.kind, NodeKind::Leaf | NodeKind::Native) {
+                if !matches!(node.kind, NodeKind::Leaf | NodeKind::Raw | NodeKind::Native) {
                     return Err(Error::path(
                         fact.path.to_string(),
                         "a constraint applies to a leaf only",
@@ -117,7 +117,7 @@ impl State {
                 }
                 continue;
             };
-            if !matches!(node.kind, NodeKind::Leaf) {
+            if !matches!(node.kind, NodeKind::Leaf | NodeKind::Raw) {
                 for fact in facts {
                     compacted.facts.insert(fact.clone());
                 }
