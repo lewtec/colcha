@@ -206,18 +206,6 @@ By default, `Vec<T>` behaves as a map keyed by one field. The element needs exac
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
-Add `#[colcha(concat)]` when several layers contribute items to one ordered list. The fold sorts the list facts by `(stamp, value)` and concatenates them, so merge order does not matter. The fold keeps duplicates, and only a tombstone removes a whole contribution.
-
-```rust
-#[derive(colcha::Schema, colcha::Materialize)]
-struct Backup {
-    #[colcha(concat)]
-    actions: Vec<String>,
-}
-```
-
-With `actions: ["stop-db"]` at clock 1 and `actions: ["dump-db", "start-db"]` at clock 2, the folded list is `["stop-db", "dump-db", "start-db"]`.
-
 Add `#[colcha(min_len = N)]` to a `Vec<T>` field to require at least `N` items. The constraint applies to the folded list, so the empty natural default fails when `N > 0`. An explicit empty keyed list, written as `tools: []`, is a valid fact and also fails the constraint.
 
 ## Native types
@@ -257,7 +245,7 @@ enum Action {
 }
 ```
 
-The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]` or `#[colcha(concat)]`.
+The DSL writes the value as an object: `step: { kind: "start", service: "api" }`. The fold reads the tag, selects the variant, fills field defaults, and rejects unknown fields. The folded value keeps the tag. `Option<Action>` accepts `null`; `Vec<Action>` needs `#[colcha(atomic)]`.
 
 ## Open structs
 

@@ -1,7 +1,10 @@
 # ADR-0011: listas concat
 
-Status: accepted
+Status: superseded by ADR-0014
 Date: 2026-11-17
+
+> O ADR-0014 removeu `#[colcha(concat)]`. Toda `Vec<T>` é lista por chave ou
+> lista atômica. Este documento fica como histórico da decisão revertida.
 
 ## Context
 

@@ -59,7 +59,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
 | Heterogeneous values | base16-gtk, schema | `values` mixes strings, ints, and nested maps | yes (`Raw`) |
 | Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | yes (`#[colcha(tag)]`) |
-| Lists of structs | schema | `backup.actions` keeps input order | yes (`#[colcha(concat)]`) |
+| Lists of structs | schema | `backup.actions` keeps input order | partial (`#[colcha(atomic)]` keeps the whole-list value) |
 | Comprehensions | schema | `core:place` expands `items` into `file.home` | yes (resolution stage) |
 | Struct defaults | schema | `lint.tools.00-go.enable = true` comes from the schema | yes |
 | Null values | webapp | `whatsapp.browser = null` | partial |
@@ -69,7 +69,7 @@ Status meanings: `yes` means colcha covers the feature.
 The corpus also pins behaviour that colcha does not model yet:
 
 - `Option<T>` treats `null` and absence as the same value.
-- `Vec<T>` is keyed by default, so input order is lost; `#[colcha(concat)]` keeps order but cannot retract one item.
+- `Vec<T>` is keyed by default, so input order is lost. `#[colcha(atomic)]` keeps a whole-list value but does not merge layers.
 - Tagged unions accept named variants only; scalar variants use `Raw`.
 - Open structs need an explicit `#[colcha(rest)]` field; a definition that ends in `...` has no direct equivalent.
 - References, comprehensions, conditionals, interpolation and module schemas resolve before `State`; the crate itself has no syntax for them. See ADR-0012.

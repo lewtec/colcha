@@ -26,7 +26,7 @@ comprehensions e schema por módulo são resolvidos antes dos fatos (ADR-0012).
 - Autoria com referências, condicionais, comprehensions e schema por módulo resolve antes de `State`. A colcha recebe fatos concretos.
 - Structs derivadas são fechadas. Um campo `#[colcha(rest)]` aceita chaves desconhecidas.
 - Enums derivados são unitários por padrão. `#[colcha(tag = "...")]` produz uma união tagueada com variantes nomeadas.
-- `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica ou concat.
+- `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica.
 - `Raw` aceita qualquer `Value` concreto. Ele não tem caminhos filhos.
 - `Value` não é um tipo de campo direto. Use `Raw`; ele implementa `NodeOf` e `Materialize`.
 
@@ -152,11 +152,10 @@ schema, não um dado. A colcha tem schema estático.
 
 ### P1: semântica de listas (resolvido)
 
-A colcha tem três modos: lista por chave, lista atômica e lista concat.
+A colcha tem dois modos: lista por chave e lista atômica.
 
-- Lista por chave exige um campo `String` e chaves válidas.
+- Lista por chave exige um campo `String` e chaves válidas; a ordem é a da chave.
 - Lista atômica usa LWW.
-- Lista concat ordena os fatos por `(Stamp, Value)` e concatena os itens.
 - `BTreeSet` usa união, mas ordena e deduplica.
 
 O modot usa listas sem chave e com ordem:
@@ -167,11 +166,10 @@ O modot usa listas sem chave e com ordem:
 - `hosts.<name>.ips` é uma lista de strings.
 - `bins` é uma lista de strings.
 
-Resolução: `#[colcha(concat)]` em campo `Vec<T>`. A dobra ordena os candidatos
-por `(stamp, valor)`, concatena os itens e preserva duplicatas. O merge continua
-sendo união de fatos, então o resultado não depende da ordem de merge. Uma
-contribuição inteira só sai por tombstone; não há retração por item na v1.
-`min_len` continua disponível em `cmd`.
+Resolução: não há lista concat na v1 (ADR-0014). `backup.actions` precisa de um
+campo-chave, virar `BTreeMap` ou `Raw`, ou ser atômica. `cmd` e `ips` podem ser
+atômicas; a ordem passa a ser a do valor. `min_len` continua disponível em
+`cmd`.
 
 ### P2: lista vazia (resolvido)
 
@@ -240,8 +238,9 @@ Um avaliador embutido monta o schema antes de `State`, mas o contrato de
 3. Enum com etiqueta externa. Feito. Desbloqueia `backup.actions` e `place.steps`.
 4. Struct ou mapa aberto. Feito. Desbloqueia `#PlaceConfig`, `#gtkSettingsShared`
    e `options`.
-5. Política de lista explícita. Feito com `#[colcha(concat)]`. Desbloqueia
-   `actions`, `cmd` e `ips`.
+5. Política de lista explícita. Feito com `#[colcha(atomic)]`; concat foi
+   rejeitado pelo ADR-0014. Desbloqueia `actions`, `cmd` e `ips` como lista
+   inteira.
 6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. A v1 mantém
    `Option<T>` para ausência e `null`; `Nullable` fica fora.
 7. Resolução de autoria (referências, condicionais, comprehensions,

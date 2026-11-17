@@ -561,9 +561,6 @@ fn fold_list(
     facts: &[Fact],
     registry: &dyn NativeRegistry,
 ) -> Result<Value, Error> {
-    if node.policy == FoldPolicy::Concat {
-        return fold_concat(node, path, facts);
-    }
     if node.key_field.is_none() {
         return fold_leaf(node, path, facts, Some(FoldPolicy::Atomic));
     }
@@ -604,82 +601,6 @@ fn fold_list(
     }
     let value = Value::List(values);
     ensure_constraints(node, path, &value)?;
-    Ok(value)
-}
-
-fn fold_concat(node: &Node, path: &Path, facts: &[Fact]) -> Result<Value, Error> {
-    let direct: Vec<&Fact> = facts.iter().filter(|fact| fact.path == *path).collect();
-    let mut constraints = node.constraints.clone();
-    for fact in &direct {
-        if let FactKind::Constraint(constraint) = &fact.kind {
-            constraints.push(constraint.clone());
-        }
-    }
-    check_constraints(&constraints, path)?;
-
-    let mut candidates: Vec<(Stamp, Value)> = Vec::new();
-    let mut defaults: Vec<(Stamp, Value)> = Vec::new();
-    for fact in &direct {
-        match &fact.kind {
-            FactKind::Candidate(value) | FactKind::Default(value) => {
-                let Value::List(items) = value else {
-                    return Err(Error::fold(
-                        path.clone(),
-                        format!("concat expects a list, found {}", value.type_name()),
-                    ));
-                };
-                let items = Value::List(items.clone());
-                if matches!(fact.kind, FactKind::Candidate(_)) {
-                    candidates.push((fact.stamp, items));
-                } else {
-                    defaults.push((fact.stamp, items));
-                }
-            }
-            FactKind::Constraint(_) | FactKind::Tombstone => {}
-        }
-    }
-
-    let mut entries = if candidates.is_empty() {
-        defaults
-    } else {
-        candidates
-    };
-    if entries.is_empty() {
-        let value = match &node.default {
-            Some(Value::List(items)) => Value::List(items.clone()),
-            Some(Value::Null) if node.optional => return Ok(Value::Null),
-            Some(other) => {
-                return Err(Error::fold(
-                    path.clone(),
-                    format!("concat default is not a list, found {}", other.type_name()),
-                ));
-            }
-            None if node.optional => return Ok(Value::Null),
-            None => Value::List(Vec::new()),
-        };
-        if !satisfies(&value, &constraints, path)? {
-            return Err(Error::fold(
-                path.clone(),
-                "concat default does not satisfy the field constraints",
-            ));
-        }
-        return Ok(value);
-    }
-
-    entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
-    let mut items = Vec::new();
-    for (_, value) in entries {
-        if let Value::List(values) = value {
-            items.extend(values);
-        }
-    }
-    let value = Value::List(items);
-    if !satisfies(&value, &constraints, path)? {
-        return Err(Error::fold(
-            path.clone(),
-            "the concatenated list does not satisfy the field constraints",
-        ));
-    }
     Ok(value)
 }
 
@@ -934,10 +855,6 @@ fn select(
             }
             Ok(Some(Value::List(values.into_iter().collect())))
         }
-        FoldPolicy::Concat => Err(Error::fold(
-            path.clone(),
-            "concat applies to lists, not to atomically folded values",
-        )),
     }
 }
 
