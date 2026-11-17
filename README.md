@@ -173,6 +173,10 @@ nix shell nixpkgs#gcc --command cargo test --workspace
 
 The suite covers the merge laws, compact equivalence, parser robustness, LWW, conflicts, tombstones, keyed lists, schema identity and native materialization.
 
+## CUE parity corpus
+
+`fixtures/cue-parity/` records real `modot home config dump` output for CUE features that colcha does not model yet. Its [README](fixtures/cue-parity/README.md) holds the feature checklist, the refresh command, and the open gaps.
+
 ## Limits
 
 - No module system in the DSL.

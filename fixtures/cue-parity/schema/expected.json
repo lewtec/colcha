@@ -1,0 +1,78 @@
+{
+  "backup": {
+    "actions": [
+      {
+        "dst": "remote:personal",
+        "kind": "git_repo_sync",
+        "name": "git repo personal",
+        "src": "/home/u/.personal"
+      },
+      {
+        "format": "tar",
+        "input_dir": "/home/u/.cache",
+        "kind": "archive",
+        "name": "archive cache",
+        "output": "/home/u/backup.tar"
+      }
+    ]
+  },
+  "file": {
+    "home": {
+      ".config/legacy": {
+        "source": {
+          "old": "legacy-src"
+        },
+        "steps": {
+          "10-require": {
+            "op": "require",
+            "patterns": {
+              "*.txt": "*"
+            }
+          }
+        },
+        "type": "place"
+      }
+    }
+  },
+  "lint": {
+    "tools": {
+      "00-go": {
+        "cmd": [
+          "golangci-lint",
+          "run"
+        ],
+        "detect": {
+          "00-go-mod": {
+            "enable": true,
+            "path": "go.mod"
+          }
+        },
+        "enable": true,
+        "needs": {
+          "golangci_lint": true
+        },
+        "output": "sarif"
+      }
+    }
+  },
+  "modules": {
+    "old": {
+      "config": {
+        "items": {
+          "/.config/legacy": "legacy-src"
+        },
+        "steps": {
+          "10-require": {
+            "op": "require",
+            "patterns": {
+              "*.txt": "*"
+            }
+          }
+        }
+      },
+      "enable": false,
+      "from": "core:place"
+    }
+  },
+  "options": {}
+}

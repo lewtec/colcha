@@ -1,0 +1,74 @@
+# CUE parity corpus
+
+These fixtures record the CUE features that `modot home config dump` resolves.
+Each `expected.json` is a projection of one dump and is never hand-edited.
+Use the corpus to compare future colcha features against real CUE behaviour.
+
+## Refresh
+
+`refresh.sh` requires `modot` and `jq` on `PATH`.
+
+```text
+./refresh.sh          # regenerate every expected.json
+./refresh.sh --check  # fail when expected.json is stale
+```
+
+The projection keeps only the roots that the fixture contributes.
+Prelude data (`browser`, `desktop`, `drivers`, and similar) and absolute paths
+stay out of the corpus. `refresh.sh` stores one projection per fixture.
+
+## Layout
+
+```text
+<fixture>/
+  home/.dotfiles/...   # CUE input; use the fixture as HOME
+  expected.json        # projected dump
+```
+
+Inspect one fixture by hand:
+
+```text
+HOME="$PWD/configdash/home" modot home config dump
+```
+
+`modot` discovers `$HOME/.dotfiles/modot.cue` and resolves local modules.
+The fixtures use small copies of modules from the real dotfiles.
+
+## Feature checklist
+
+Status meanings: `yes` means colcha covers the feature.
+`partial` means colcha covers a narrower or different form.
+`no` means colcha has no equivalent.
+
+| Feature | Fixture | Evidence | colcha today |
+|---------|---------|----------|--------------|
+| Module resolution | configdash, base16-gtk, webapp | `modules.<name>.input = "self:modules/..."` | no |
+| Module root fields | configdash | `dashboard_demo` appears at the top level | no |
+| External module source | schema | `modules.old.from = "core:place"` | no |
+| Schema and config unification | configdash | `options.theme.accent` merges type and value | partial |
+| Cross-field references | configdash, base16-gtk, webapp | `values.accent: options.theme.accent` | no |
+| Defaults | base16-gtk, webapp | `prefer_dark: 1`, `cursor_size: 24`, `browser: null` | yes |
+| Constraints | base16-gtk | `string & =~"^#[0-9a-fA-F]{6}$"` | partial |
+| Conditionals | base16-gtk | `if options.base16.mode == "dark" { ... }` | no |
+| Open structs | base16-gtk | `#gtkSettingsShared` ends with `...` | no |
+| Optional fields and maps | webapp | `apps?: [string]: {...}`, `profile?` | partial |
+| Open lists | webapp | `extra_flags: [...string]` | partial |
+| Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | no |
+| Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
+| Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | partial |
+| Lists of structs | schema | `backup.actions` keeps input order | partial |
+| Comprehensions | schema | `core:place` expands `items` into `file.home` | no |
+| Struct defaults | schema | `lint.tools.00-go.enable = true` comes from the schema | yes |
+| Null values | webapp | `whatsapp.browser = null` | partial |
+
+## Open gaps
+
+The corpus also pins behaviour that colcha does not model yet:
+
+- `Path` lowercases segments and accepts only `[a-z0-9][a-z0-9_-]*`.
+  CUE keys accept slashes, dots, uppercase, and glob characters.
+- `Option<T>` treats `null` and absence as the same value.
+- `Vec<T>` is a keyed map by default, so input order is lost.
+- Enums accept unit variants only.
+- Structs are closed and reject unknown fields.
+- References, comprehensions, and conditional fields have no syntax.

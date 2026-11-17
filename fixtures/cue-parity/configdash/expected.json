@@ -1,0 +1,27 @@
+{
+  "dashboard_demo": {
+    "paper": "paper.png"
+  },
+  "file": {
+    "home": {
+      ".config/theme.toml": {
+        "type": "toml",
+        "values": {
+          "accent": "blue"
+        }
+      }
+    }
+  },
+  "modules": {
+    "theme": {
+      "enable": true,
+      "from": "",
+      "input": "self:modules/theme"
+    }
+  },
+  "options": {
+    "theme": {
+      "accent": "blue"
+    }
+  }
+}

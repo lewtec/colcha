@@ -1,0 +1,37 @@
+{
+  "file": {
+    "home": {}
+  },
+  "modules": {
+    "webapp": {
+      "enable": true,
+      "from": "",
+      "input": "self:modules/webapp"
+    }
+  },
+  "options": {
+    "webapp": {
+      "apps": {
+        "meet": {
+          "browser": "brave",
+          "desktop_name": "Meet",
+          "extra_flags": [
+            "--app=https://meet.google.com"
+          ],
+          "icon": "meet",
+          "profile": "work",
+          "url": "https://meet.google.com"
+        },
+        "whatsapp": {
+          "browser": null,
+          "extra_flags": [],
+          "url": "https://web.whatsapp.com"
+        }
+      },
+      "default": {
+        "browser": "zen",
+        "webapp": "brave"
+      }
+    }
+  }
+}
