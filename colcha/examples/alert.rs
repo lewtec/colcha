@@ -104,10 +104,9 @@ impl NativeHost for DemoHost {
 
 fn state_of(source: &str, clock: u64) -> Result<State, Box<dyn StdError>> {
     let stamp = Stamp::new(clock, NodeId::from_u128(0xfeed));
-    let mut state = State::empty();
-    for fact in parse::<Config>(source, stamp)? {
-        state.insert::<Config>(fact)?;
-    }
+    let state = parse::<Config>(source, stamp)?
+        .into_iter()
+        .try_fold(State::empty(), |state, fact| state.with::<Config>(fact))?;
     Ok(state)
 }
 

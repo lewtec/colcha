@@ -14,11 +14,11 @@ fn state_of<T: Schema>(source: &str, clock: u64) -> State {
 }
 
 fn state_with_context<T: Schema>(source: &str, context: &Context, clock: u64) -> State {
-    let mut state = State::empty();
-    for fact in evaluate::<T>(source, context, stamp(clock)).expect("evaluate") {
-        state.insert::<T>(fact).expect("insert");
-    }
-    state
+    evaluate::<T>(source, context, stamp(clock))
+        .expect("evaluate")
+        .into_iter()
+        .try_fold(State::empty(), |state, fact| state.with::<T>(fact))
+        .expect("state")
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]

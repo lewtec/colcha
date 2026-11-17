@@ -122,13 +122,13 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `NodeId` | sim | valor; 16 bytes opacos | não | não tem nil; 16 bytes zero são válidos | assumir unicidade global sem o host |
 | `Stamp` | sim | valor `(u64, NodeId)` | não | não tem nil | gerar dentro da crate; o host fornece |
 | `SchemaId` | sim | valor `(String, u32)` | não | não tem nil | comparar schemas de tipos raiz diferentes como iguais |
-| `Fact` | sim | valor | não | `Error::Path` na inserção | inserir sem `Schema` |
+| `Fact` | sim | valor | não | `Error::Path` ao entrar no `State` | inserir sem `Schema` |
 | `FactKind` | sim | valor (`Candidate`, `Default`, `Constraint`, `Tombstone`) | não | `Error::Fold` na combinação inválida | usar `Tombstone` para apagar constraint de schema |
 | `Value` | sim | valor concreto | não | `Error::Fold` se não for concreto | conter `Constraint` e conflito depois da dobra |
 | `Raw` | sim | `Value` opaco | não | `Error::Materialize` com nativo | usar `Raw` para ignorar o tipo declarado |
 | `Float` | sim | valor `f64` com ordem total por bits | não | `Error::Fold` em NaN | comparar com o `PartialOrd` de `f64` |
 | `Constraint` | sim | valor; predicado | não | `Error::Fold` se o meet for vazio | afrouxar outra constraint |
-| `State` | sim | valor; `BTreeSet<Fact>` | sim, por `insert`; `union` e `compact` devolvem novo | vazio é válido | editar o `BTreeSet` fora de `insert` |
+| `State` | sim | valor; `BTreeSet<Fact>` | não; `with`, `union` e `compact` devolvem novo | vazio é válido | editar o `BTreeSet` fora de `State` |
 | `Node` | sim | valor; schema derivado | não | `Error::Fold` se o schema for inválido | editar depois de publicado |
 | `FoldPolicy` | sim | valor (`Lww`, `Flat`, `Union`, `Atomic`, `Concat`, `Native`) | não | não tem nil | mudar entre chamadas |
 | `Native` | sim | valor; nome + `Node` de args + coerção | não | `Error::Native` se ausente | fazer I/O |
@@ -147,7 +147,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-02 | `Stamp` ordena por `clock` e desempata por `NodeId` em ordem lexicográfica; a ordem é total. | `Stamp` | comparação que ignora `NodeId` |
 | INV-03 | Todo `Fact` carrega `SchemaId` e é imutável. | `Fact` | fato sem identidade de schema |
 | INV-04 | `State::union` é comutativa, associativa e idempotente, e não faz I/O. | `State` | merge com lógica condicional; merge que abre recurso |
-| INV-05 | `State::insert` rejeita caminho malformado ou desconhecido, escrita em campo derivado e `SchemaId` diferente. | `State` | inserir direto no `BTreeSet` |
+| INV-05 | `State::with` rejeita caminho malformado ou desconhecido, escrita em campo derivado e `SchemaId` diferente. | `State` | inserir direto no `BTreeSet` |
 | INV-06 | `State::compact` devolve estado cujo `fold` é igual ao do estado original para o mesmo `Schema`. | `State` | compactar sem `Schema`; remover fato de `Union` |
 | INV-07 | Depois da dobra, `Value` é concreto: não contém `Constraint`, não contém conflito e usa `BTreeMap` e `Vec`; ambos mantêm ordem determinística. | `Value` | devolver valor parcial; usar `HashMap` |
 | INV-08 | Uma constraint só estreita o conjunto aceito; meet de constraints incompatíveis é `Error::Fold`. | `Constraint` | aceitar valor que viola uma constraint |
@@ -157,7 +157,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-12 | `NativeHost::build` roda no máximo uma vez por nó nativo e só depois de dobra bem-sucedida. | `resolve` | build na dobra; build antes de validar |
 | INV-13 | `resolve` e `fold` recusam `State` com `SchemaId` diferente de `T::NAME` + `T::VERSION`. | `resolve`, `fold` | dobrar schema desconhecido; ignorar identidade |
 | INV-14 | Tombstone no caminho P absorve fatos em P e abaixo de P com `stamp <= tombstone.stamp`. | `fold` | apagar só o nó exato; apagar fato mais novo |
-| INV-15 | Escrita em campo-chave é rejeitada na inserção; o valor do campo-chave é derivado do segmento. | `State`, `fold` | aceitar `servers/foo/name = "bar"` |
+| INV-15 | Escrita em campo-chave falha ao entrar no `State`; o valor vem do segmento. | `State`, `fold` | aceitar `servers/foo/name = "bar"` |
 | INV-16 | `Vec<T>` sem `atomic` ou `concat` exige `#[colcha(key)]`; sem ele o derive falha. | derive | escolher índice; escolher hash |
 | INV-17 | A saída de `Vec<T>` por chave é ordenada pelo segmento da chave. | `fold`, `Materialize` | ordem de inserção |
 | INV-18 | O parser limita entrada a 1 MiB e aninhamento a 32; acima disso devolve `Error::Parse`. | parser | alocar sem limite |
@@ -189,9 +189,9 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `evaluate::<T>(source, context, stamp)` | sintaxe inválida | `Error::Parse`; nenhum fato é devolvido |
 | `evaluate::<T>` | caminho desconhecido para o schema | `Error::Path`; nenhum fato é devolvido |
 | `evaluate::<T>` | referência não resolvida, ciclo, campo ativo duplicado ou referência ambígua | `Error::Eval`; nenhum fato é devolvido |
-| `State::insert::<T>(fact)` | caminho malformado, caminho desconhecido, escrita em campo-chave | `Error::Path`; estado inalterado |
-| `State::insert::<T>` | `SchemaId` diferente de `T::NAME` + `T::VERSION` | `Error::Schema`; estado inalterado |
-| `State::insert::<T>` | fato já presente | sem erro; o conjunto não muda |
+| `State::with::<T>(fact)` | caminho malformado, caminho desconhecido, escrita em campo-chave | `Error::Path`; nenhum estado novo |
+| `State::with::<T>` | `SchemaId` diferente de `T::NAME` + `T::VERSION` | `Error::Schema`; nenhum estado novo |
+| `State::with::<T>` | fato já presente | sem erro; o estado devolvido é igual |
 | `State::union(other)` | qualquer estado | sem erro; união total |
 | `State::compact::<T>()` | fato de caminho desconhecido, fato de outro `SchemaId` | sem erro; o fato é preservado |
 | `fold::<T>(state, registry)` | candidato viola constraint e não há default | `Error::Fold` com caminho e razão |
@@ -226,7 +226,7 @@ impl Context {
 
 impl State {
     pub fn empty() -> State;
-    pub fn insert<T: Schema>(&mut self, fact: Fact) -> Result<()>;
+    pub fn with<T: Schema>(&self, fact: Fact) -> Result<State>;
     pub fn union(&self, other: &State) -> State;
     pub fn compact<T: Schema>(&self) -> State;
     pub fn facts(&self) -> impl Iterator<Item = &Fact>;
@@ -257,12 +257,16 @@ schema do tipo Rust, representando o resto como `Raw`, e emite fatos com um
 
 A v1 embute um avaliador na fase de resolução. `evaluate::<T>` recebe a autoria,
 um `Context` do host e o `Stamp`, e devolve `Vec<Fact>`. O avaliador não muda
-`fold`, `State` nem `Materialize`; ele apenas produz fatos concretos antes da
-inserção.
+`fold`, `State` nem `Materialize`; ele apenas produz fatos concretos antes de
+entrar no `State`.
 
 `Context` é imutável para quem chama. `with` e `merge` devolvem um novo
 `Context`; `merge` é comutativo e idempotente quando não há valores diferentes
 no mesmo caminho. Conflito no mesmo caminho devolve `Error::Eval`.
+
+`State` também é imutável para quem chama. `with`, `union` e `compact` devolvem
+um novo `State`; um valor nunca é alterado inplace, só combinado em um novo
+valor.
 
 O avaliador MUST resolver, nesta ordem:
 
@@ -407,10 +411,10 @@ pub trait NativeType: Sized {
 
 | Variant | Payload | Raised by |
 |---------|---------|-----------|
-| `Error::Path` | caminho, razão | parser, `State::insert` |
+| `Error::Path` | caminho, razão | parser, `State::with` |
 | `Error::Eval` | caminho, razão | `evaluate` |
 | `Error::Parse` | linha, coluna, mensagem | parser |
-| `Error::Schema` | esperado `SchemaId`, encontrado `SchemaId` | `State::insert`, `fold`, `resolve` |
+| `Error::Schema` | esperado `SchemaId`, encontrado `SchemaId` | `State::with`, `fold`, `resolve` |
 | `Error::Fold` | caminho, razão | `fold`, `resolve` |
 | `Error::Conflict` | caminho, candidatos | `fold`, `resolve` |
 | `Error::Native` | caminho, nome | parser, `fold`, `resolve` |

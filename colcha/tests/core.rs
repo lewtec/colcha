@@ -10,11 +10,27 @@ fn stamp(clock: u64) -> Stamp {
 }
 
 fn state_of<T: Schema>(source: &str, clock: u64) -> State {
-    let mut state = State::empty();
-    for fact in parse::<T>(source, stamp(clock)).expect("parse") {
-        state.insert::<T>(fact).expect("insert");
-    }
-    state
+    parse::<T>(source, stamp(clock))
+        .expect("parse")
+        .into_iter()
+        .try_fold(State::empty(), |state, fact| state.with::<T>(fact))
+        .expect("state")
+}
+
+#[test]
+fn adding_a_fact_returns_a_new_state() {
+    let base = state_of::<Service>(r#"name: "old""#, 1);
+    let fact = colcha::Fact::candidate(
+        colcha::Path::parse("enabled").unwrap(),
+        stamp(2),
+        colcha::SchemaId::new(Service::NAME, Service::VERSION),
+        Value::Bool(false),
+    );
+
+    let updated = base.with::<Service>(fact).expect("with");
+    assert_eq!(base.len(), 1);
+    assert_eq!(updated.len(), 2);
+    assert_ne!(base, updated);
 }
 
 #[derive(Debug, PartialEq, Schema, Materialize)]
@@ -122,10 +138,10 @@ threshold: float & <=10"#,
 
 #[test]
 fn a_tombstone_absorbs_older_facts() {
-    let mut state = state_of::<Service>(r#"name: "old""#, 1);
+    let state = state_of::<Service>(r#"name: "old""#, 1);
     let path = colcha::Path::parse("name").unwrap();
-    state
-        .insert::<Service>(colcha::Fact::tombstone(
+    let state = state
+        .with::<Service>(colcha::Fact::tombstone(
             path,
             stamp(2),
             colcha::SchemaId::new(Service::NAME, Service::VERSION),
@@ -137,10 +153,10 @@ fn a_tombstone_absorbs_older_facts() {
 
 #[test]
 fn a_newer_fact_revives_a_tombstone() {
-    let mut state = state_of::<Service>(r#"name: "old""#, 1);
+    let state = state_of::<Service>(r#"name: "old""#, 1);
     let path = colcha::Path::parse("name").unwrap();
-    state
-        .insert::<Service>(colcha::Fact::tombstone(
+    let state = state
+        .with::<Service>(colcha::Fact::tombstone(
             path,
             stamp(2),
             colcha::SchemaId::new(Service::NAME, Service::VERSION),

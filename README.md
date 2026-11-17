@@ -41,10 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         threshold: 42.0 & <=100
     "#;
 
-    let mut state = State::empty();
-    for fact in parse::<Alert>(source, stamp)? {
-        state.insert::<Alert>(fact)?;
-    }
+    let state = parse::<Alert>(source, stamp)?
+        .into_iter()
+        .try_fold(State::empty(), |state, fact| state.with::<Alert>(fact))?;
 
     let alert = resolve::<Alert>(&state, &colcha::EmptyHost)?;
     assert_eq!(alert.threshold, 42.0);
@@ -168,16 +167,17 @@ let context = Context::new()
         colcha::Value::Map([("a".into(), colcha::Value::String("one".into()))].into()),
     )?;
 
-let mut state = State::empty();
-for fact in evaluate::<Config>(source, &context, Stamp::new(1, NodeId::from_u128(1)))? {
-    state.insert::<Config>(fact)?;
-}
+let state = evaluate::<Config>(source, &context, Stamp::new(1, NodeId::from_u128(1)))?
+    .into_iter()
+    .try_fold(State::empty(), |state, fact| state.with::<Config>(fact))?;
 let config = resolve::<Config>(&state, &EmptyHost)?;
 ```
 
 References resolve in this order: comprehension binding, document field (including forward references), then `Context`. A missing reference, a cycle, an active duplicate or an ambiguous reference returns `Error::Eval`. Interpolation accepts scalars only. Truthiness is false for `null`, `false`, `0`, `0.0`, empty string, empty list and empty map.
 
 `Context` is immutable for the caller. `with` and `merge` return a new context; `merge` is commutative and idempotent when paths do not disagree. Different values at the same path return `Error::Eval`.
+
+`State` is immutable too. `with`, `union` and `compact` return a new state; no call changes an existing one in place.
 
 ## Defaults
 

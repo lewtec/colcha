@@ -22,8 +22,10 @@ impl State {
         }
     }
 
-    /// Insert one fact after validating it against the schema.
-    pub fn insert<T: Schema>(&mut self, fact: Fact) -> Result<(), Error> {
+    /// Return a new state with one fact after validating it against the schema.
+    ///
+    /// The receiver stays unchanged. Adding an equal fact is idempotent.
+    pub fn with<T: Schema>(&self, fact: Fact) -> Result<State, Error> {
         let expected = SchemaId::new(T::NAME, T::VERSION);
         if fact.schema != expected {
             return Err(Error::Schema {
@@ -67,8 +69,9 @@ impl State {
             }
             FactKind::Tombstone => {}
         }
-        self.facts.insert(fact);
-        Ok(())
+        let mut facts = self.facts.clone();
+        facts.insert(fact);
+        Ok(State { facts })
     }
 
     /// Total merge: set union. Commutative, associative and idempotent.

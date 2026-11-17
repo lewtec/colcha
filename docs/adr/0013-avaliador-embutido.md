@@ -40,10 +40,10 @@ O avaliador MUST emitir apenas `Fact` com `Value` concreto. `fold`, `State` e
 `Materialize` não mudam. Referência não resolvida, ciclo, campo ativo duplicado
 ou referência ambígua devolvem `Error::Eval`.
 
-O `Context` é imutável para quem chama. `with` e `merge` devolvem um novo
-`Context`; um valor nunca é alterado inplace, só combinado em um novo valor.
-`merge` é comutativo e idempotente quando não há valores diferentes no mesmo
-caminho.
+`Context` e `State` são imutáveis para quem chama. `with` e `merge` devolvem um
+novo `Context`; `with`, `union` e `compact` devolvem um novo `State`. Um valor
+nunca é alterado inplace, só combinado em um novo valor. `merge` é comutativo e
+idempotente quando não há valores diferentes no mesmo caminho.
 
 ## Consequences
 
