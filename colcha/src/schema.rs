@@ -35,6 +35,7 @@ pub enum FoldPolicy {
     Flat,
     Union,
     Atomic,
+    Concat,
     Native,
 }
 

@@ -124,7 +124,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `Constraint` | sim | valor; predicado | não | `Error::Fold` se o meet for vazio | afrouxar outra constraint |
 | `State` | sim | valor; `BTreeSet<Fact>` | sim, por `insert`; `union` e `compact` devolvem novo | vazio é válido | editar o `BTreeSet` fora de `insert` |
 | `Node` | sim | valor; schema derivado | não | `Error::Fold` se o schema for inválido | editar depois de publicado |
-| `FoldPolicy` | sim | valor (`Lww`, `Flat`, `Union`, `Atomic`, `Native`) | não | não tem nil | mudar entre chamadas |
+| `FoldPolicy` | sim | valor (`Lww`, `Flat`, `Union`, `Atomic`, `Concat`, `Native`) | não | não tem nil | mudar entre chamadas |
 | `Native` | sim | valor; nome + `Node` de args + coerção | não | `Error::Native` se ausente | fazer I/O |
 | `NativeHandle` | sim | identidade opaca | não | `Error::Build` se o host falhar | assumir tipo concreto sem downcast |
 | `NativeRegistry` | sim | identidade do host | não | `Error::Native` | chamar `build` |
@@ -166,6 +166,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-27 | O valor dobrado mantém o tag. | `Node` | aceitar `union.campo` |
 | INV-28 | Um nó com `rest` aceita chave desconhecida e a dobra no campo rest. | `lookup`, `fold` | gravar em `rest.x` |
 | INV-29 | `MinLen` é avaliado sobre a lista dobrada, inclusive default e lista por chave. | `fold`, `Constraint` | validar só candidato atômico |
+| INV-30 | `Concat` ordena por `(Stamp, Value)` e preserva duplicatas; fato não-lista é `Error::Fold`. | `fold` | ordenar por chegada; deduplicar itens |
 
 ## Errors
 
@@ -379,9 +380,10 @@ bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
 | `Flat` | campo anotado `#[colcha(flat)]`, discriminante de enum | todos os candidatos válidos MUST ser iguais; qualquer diferença é `Error::Conflict` |
 | `Union` | `BTreeSet<T>`, `HashSet<T>` | união dos elementos; lista é achatada em elementos; ordem final é pela chave |
 | `Atomic` | `Vec<T>` anotado `#[colcha(atomic)]` | a lista inteira é um valor; vence o maior `Stamp`; empate com listas diferentes é `Error::Conflict` |
+| `Concat` | campo `Vec<T>` anotado `#[colcha(concat)]` | ordena os fatos de lista por `(Stamp, Value)` e concatena os itens; preserva duplicatas |
 | `Native` | campo nativo | escolhe um nome permitido; nomes diferentes são `Error::Conflict`; dobra os args contra `Native::args`, aplica `Native::coerce` e produz `Value::Native` |
 
-`FoldPolicy` se aplica a folha. `Node` de struct e de mapa é estrutural e não usa `policy`.
+`FoldPolicy` se aplica a folha e a listas sem campo-chave. `Node` de struct e de mapa é estrutural e não usa `policy`.
 
 Default de config é um fato `FactKind::Default`; default de schema é `Node.default`. A dobra usa candidato comum válido primeiro. Sem candidato comum válido, usa o default de config válido de maior `Stamp`. Sem default de config válido, usa `Node.default` se ele for válido. Entre defaults de config, a política do campo decide. Sem default válido e campo obrigatório, a dobra devolve `Error::Fold`. Campo `Option<T>` ausente é `None`, sem erro.
 
@@ -404,6 +406,8 @@ Tombstone é um fato `FactKind::Tombstone`. Ele absorve todo fato no mesmo camin
 
 Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra preenche o campo-chave no map de cada elemento. Um fato `[]` no caminho da lista é aceito e representa a lista vazia. A dobra de nativo valida os nomes dos argumentos contra `Native::args` e rejeita argumento desconhecido com `Error::Fold`.
 
+Lista `Concat` reúne os candidatos de lista no caminho. A ordem é por `(Stamp, Value)`, então o resultado não depende da ordem de merge. Duplicatas são preservadas e só um tombstone remove uma contribuição inteira. Sem candidatos, a dobra usa os defaults de config; sem eles, usa `Node.default` ou `Null` quando o campo é `Option<T>`.
+
 ### Derive attributes
 
 | Attribute | Applies to | Rule |
@@ -411,6 +415,7 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 | `#[colcha(key)]` | campo `String` de elemento de `Vec<T>` | identifica o campo-chave; a dobra preenche o valor na materialização; escrita no caminho é `Error::Path` |
 | `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
 | `#[colcha(min_len = N)]` | campo `Vec<T>` | adiciona `Constraint::MinLen(N)`, avaliado na lista dobrada |
+| `#[colcha(concat)]` | campo `Vec<T>` ou `Option<Vec<T>>` | usa `FoldPolicy::Concat`; concatena os fatos de lista por `(Stamp, Value)` |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
 | `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |
@@ -544,3 +549,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0008: `Raw` cobre valores heterogêneos. Rejeitados: traits em `Value`; caso especial de mapa; merge por chave dentro de `Raw`.
 - ADR-0009: uniões tagueadas em enums. Rejeitados: payload sem tag; tag adjacente; caminhos por variante; `serde` como formato.
 - ADR-0010: campo rest para structs abertas. Rejeitados: struct aberta implícita; ignorar chave desconhecida; aninhar extras no campo rest.
+- ADR-0011: listas concat. Rejeitados: união ordenada por item; lista CRDT com identidade de elemento; retração por item na v1.

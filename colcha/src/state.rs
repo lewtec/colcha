@@ -152,6 +152,7 @@ impl State {
                         match node.policy {
                             FoldPolicy::Lww | FoldPolicy::Atomic => kept.push(fact),
                             FoldPolicy::Union => kept.push(fact),
+                            FoldPolicy::Concat => kept.push(fact),
                             FoldPolicy::Flat | FoldPolicy::Native => kept.push(fact),
                         }
                     }

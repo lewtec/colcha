@@ -24,7 +24,7 @@ Ele não representa o config real sem extensões.
 - O schema é estático e vem de `T::schema()`.
 - Structs derivadas são fechadas. Um campo `#[colcha(rest)]` aceita chaves desconhecidas.
 - Enums derivados são unitários por padrão. `#[colcha(tag = "...")]` produz uma união tagueada com variantes nomeadas.
-- `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica.
+- `Vec<T>` com campo `#[colcha(key)]` é lista por chave. Sem chave, é atômica ou concat.
 - `Raw` aceita qualquer `Value` concreto. Ele não tem caminhos filhos.
 - `Value` não é um tipo de campo direto. Use `Raw`; ele implementa `NodeOf` e `Materialize`.
 
@@ -148,12 +148,13 @@ como mapa.
 O topo de `~/modot.cue` continua fora de escopo: `a.b` adiciona um campo ao
 schema, não um dado. A colcha tem schema estático.
 
-### P1: semântica de listas
+### P1: semântica de listas (resolvido)
 
-A colcha tem dois modos: lista por chave e lista atômica.
+A colcha tem três modos: lista por chave, lista atômica e lista concat.
 
 - Lista por chave exige um campo `String` e chaves válidas.
 - Lista atômica usa LWW.
+- Lista concat ordena os fatos por `(Stamp, Value)` e concatena os itens.
 - `BTreeSet` usa união, mas ordena e deduplica.
 
 O modot usa listas sem chave e com ordem:
@@ -164,12 +165,11 @@ O modot usa listas sem chave e com ordem:
 - `hosts.<name>.ips` é uma lista de strings.
 - `bins` é uma lista de strings.
 
-União de `BTreeSet` não preserva ordem nem duplicatas. LWW perde contribuições de
-outras camadas.
-
-Direção: definir uma política de lista por campo. Opções: atômica, por chave,
-concatenação, união ordenada. Não usar `BTreeSet` como padrão para listas de
-valores.
+Resolução: `#[colcha(concat)]` em campo `Vec<T>`. A dobra ordena os candidatos
+por `(stamp, valor)`, concatena os itens e preserva duplicatas. O merge continua
+sendo união de fatos, então o resultado não depende da ordem de merge. Uma
+contribuição inteira só sai por tombstone; não há retração por item na v1.
+`min_len` continua disponível em `cmd`.
 
 ### P2: lista vazia (resolvido)
 
@@ -233,7 +233,8 @@ contrato de `SchemaId`.
 3. Enum com etiqueta externa. Feito. Desbloqueia `backup.actions` e `place.steps`.
 4. Struct ou mapa aberto. Feito. Desbloqueia `#PlaceConfig`, `#gtkSettingsShared`
    e `options`.
-5. Política de lista explícita. Desbloqueia `actions`, `cmd` e `ips`.
+5. Política de lista explícita. Feito com `#[colcha(concat)]`. Desbloqueia
+   `actions`, `cmd` e `ips`.
 6. `MinLen` e `Nullable`. `MinLen` feito com `#[colcha(min_len)]`. `Nullable`
    segue aberto.
 

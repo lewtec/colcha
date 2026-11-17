@@ -57,7 +57,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
 | Heterogeneous values | base16-gtk, schema | `values` mixes strings, ints, and nested maps | yes (`Raw`) |
 | Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | yes (`#[colcha(tag)]`) |
-| Lists of structs | schema | `backup.actions` keeps input order | partial |
+| Lists of structs | schema | `backup.actions` keeps input order | yes (`#[colcha(concat)]`) |
 | Comprehensions | schema | `core:place` expands `items` into `file.home` | no |
 | Struct defaults | schema | `lint.tools.00-go.enable = true` comes from the schema | yes |
 | Null values | webapp | `whatsapp.browser = null` | partial |
@@ -67,7 +67,7 @@ Status meanings: `yes` means colcha covers the feature.
 The corpus also pins behaviour that colcha does not model yet:
 
 - `Option<T>` treats `null` and absence as the same value.
-- `Vec<T>` is a keyed map by default, so input order is lost.
+- `Vec<T>` is keyed by default, so input order is lost; `#[colcha(concat)]` keeps order but cannot retract one item.
 - Tagged unions accept named variants only; scalar variants use `Raw`.
 - Open structs need an explicit `#[colcha(rest)]` field; a definition that ends in `...` has no direct equivalent.
 - References, comprehensions, and conditional fields have no syntax.

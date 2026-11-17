@@ -29,6 +29,7 @@ struct FieldAttrs {
     flat: bool,
     native: bool,
     rest: bool,
+    concat: bool,
     min_len: Option<usize>,
     default: Option<Lit>,
     rename: Option<String>,
@@ -46,6 +47,9 @@ fn field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 Ok(())
             } else if meta.path.is_ident("rest") {
                 attrs.rest = true;
+                Ok(())
+            } else if meta.path.is_ident("concat") {
+                attrs.concat = true;
                 Ok(())
             } else if meta.path.is_ident("min_len") {
                 let value = meta.value()?;
@@ -161,6 +165,20 @@ fn field_plan(field: &Field) -> syn::Result<(syn::Ident, String, FieldAttrs)> {
             "#[colcha(min_len = N)] applies to Vec<T>",
         ));
     }
+    if attrs.concat {
+        if attrs.atomic || attrs.flat || attrs.key || attrs.native || attrs.rest {
+            return Err(syn::Error::new_spanned(
+                field,
+                "a concat field cannot also be a key, native, atomic, flat or rest field",
+            ));
+        }
+        if vec_element_inside_option(&field.ty).is_none() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[colcha(concat)] applies to Vec<T>",
+            ));
+        }
+    }
     if attrs.rest {
         if attrs.key || attrs.native || attrs.atomic || attrs.flat {
             return Err(syn::Error::new_spanned(
@@ -266,7 +284,7 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
         };
         default_entries.push(default_entry);
 
-        if !attrs.atomic {
+        if !attrs.atomic && !attrs.concat {
             if let Some(element) = vec_element_inside_option(&field.ty) {
                 assertions.push(quote! {
                     const _: () = {
@@ -619,7 +637,7 @@ fn variant_fields_tokens(
         };
         default_entries.push(default_entry);
 
-        if !attrs.atomic {
+        if !attrs.atomic && !attrs.concat {
             if let Some(element) = vec_element_inside_option(&field.ty) {
                 assertions.push(quote! {
                     const _: () = {
@@ -685,6 +703,11 @@ fn field_node(field: &Field, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
     }
     if attrs.atomic {
         statements.push(quote!(node.policy = ::colcha::FoldPolicy::Atomic;));
+        statements.push(quote!(node.key_field = None;));
+        statements.push(quote!(node.kind = ::colcha::NodeKind::List;));
+    }
+    if attrs.concat {
+        statements.push(quote!(node.policy = ::colcha::FoldPolicy::Concat;));
         statements.push(quote!(node.key_field = None;));
         statements.push(quote!(node.kind = ::colcha::NodeKind::List;));
     }

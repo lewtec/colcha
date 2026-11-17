@@ -156,6 +156,18 @@ Each type answers one question: does it have a natural default? If yes, the fiel
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 
+Add `#[colcha(concat)]` when several layers contribute items to one ordered list. The fold sorts the list facts by `(stamp, value)` and concatenates them, so merge order does not matter. The fold keeps duplicates, and only a tombstone removes a whole contribution.
+
+```rust
+#[derive(colcha::Schema, colcha::Materialize)]
+struct Backup {
+    #[colcha(concat)]
+    actions: Vec<String>,
+}
+```
+
+With `actions: ["stop-db"]` at clock 1 and `actions: ["dump-db", "start-db"]` at clock 2, the folded list is `["stop-db", "dump-db", "start-db"]`.
+
 Add `#[colcha(min_len = N)]` to a `Vec<T>` field to require at least `N` items. The constraint applies to the folded list, so the empty natural default fails when `N > 0`. An explicit empty keyed list, written as `tools: []`, is a valid fact and also fails the constraint.
 
 ## Native types
