@@ -151,7 +151,7 @@ Each type answers one question: does it have a natural default? If yes, the fiel
 
 ## Keyed collections
 
-`Vec<T>` behaves as a map keyed by one field. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment: `alert.foo` addresses element `foo`, and the fold derives the key field from that segment. The fold orders output by key.
+`Vec<T>` behaves as a map keyed by one field. The element needs exactly one `#[colcha(key)]` `String` field. The key becomes a path segment: `alert.foo` addresses element `foo`, and `alert."web.1"` addresses element `web.1`. Keys are case-sensitive; quote a segment that contains a dot, slash, or other punctuation. The fold derives the key field from that segment. The fold orders output by key.
 
 Use `#[colcha(atomic)]` for a whole-list value. `BTreeSet<T>` uses union.
 

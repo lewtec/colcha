@@ -112,7 +112,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 
 | Type | Exported | Identity or value | Mutable | Nil/error | Callers MUST NOT |
 |------|----------|------|---------|-----------|------------------|
-| `Path` | sim | valor; sequência canônica de segmentos | não | `Error::Path` na construção inválida | construir fora do regex: vazio, maiúsculo, longo |
+| `Path` | sim | valor; segmentos case-sensitive | não | `Error::Path` na construção inválida | construir vazio, fundo demais ou com segmento vazio |
 | `NodeId` | sim | valor; 16 bytes opacos | não | não tem nil; 16 bytes zero são válidos | assumir unicidade global sem o host |
 | `Stamp` | sim | valor `(u64, NodeId)` | não | não tem nil | gerar dentro da crate; o host fornece |
 | `SchemaId` | sim | valor `(String, u32)` | não | não tem nil | comparar schemas de tipos raiz diferentes como iguais |
@@ -136,7 +136,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 
 | ID | Predicate | On | Forbidden bypass |
 |----|-----------|----|------------------|
-| INV-01 | Todo `Path` não-raiz tem 1 a 32 segmentos e cada segmento casa `^[a-z0-9][a-z0-9_-]{0,63}$`; a raiz é o path vazio. | `Path` | `Path::from_segments` sem validação |
+| INV-01 | Todo `Path` não-raiz tem 1 a 32 segmentos não vazios e case-sensitive; a raiz é o path vazio. | `Path` | `Path::from_segments` sem validação |
 | INV-02 | `Stamp` ordena por `clock` e desempata por `NodeId` em ordem lexicográfica; a ordem é total. | `Stamp` | comparação que ignora `NodeId` |
 | INV-03 | Todo `Fact` carrega `SchemaId` e é imutável. | `Fact` | fato sem identidade de schema |
 | INV-04 | `State::union` é comutativa, associativa e idempotente, e não faz I/O. | `State` | merge com lógica condicional; merge que abre recurso |
@@ -157,8 +157,9 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | INV-19 | O discriminante de enum nativo é `Flat`: dois `kind` válidos diferentes produzem `Error::Conflict`. | `fold` | escolher o `kind` por stamp |
 | INV-20 | `Error` é classificado por variante; `Display` não é contrato de máquina. | `Error` | fazer parse de mensagem |
 | INV-21 | A coerção declarada por `Native` é pura e roda na dobra, nunca no merge. | `fold` | abrir recurso para descobrir o tipo |
-| INV-22 | O mesmo bloco não pode declarar a mesma chave duas vezes após normalização de caixa. | parser | aceitar `Foo` e `foo` no mesmo bloco |
+| INV-22 | O mesmo bloco não pode declarar a mesma chave duas vezes. Chaves são case-sensitive. | parser | aceitar `Foo` e `foo` como a mesma chave |
 | INV-23 | `Float` rejeita NaN e ordena pelos bits; a ordem é total e determinística. | `Float` | usar `PartialOrd` de `f64` no `BTreeSet` |
+| INV-24 | `Path::Display` escreve uma forma que `Path::parse` reconstrói; segmentos fora da forma nua são citados com escapes JSON. | `Path` | escrever segmento ambíguo sem aspas |
 
 ## Errors
 
@@ -167,7 +168,7 @@ Dependências novas aprovadas na sessão de grilling: `serde`, `proc-macro2`, `s
 | `parse::<T>(source, stamp)` | sintaxe inválida | `Error::Parse` com linha e coluna; nenhum fato é devolvido |
 | `parse::<T>` | caminho inválido, campo desconhecido | `Error::Path`; nenhum fato é devolvido |
 | `parse::<T>` | escrita em campo-chave | `Error::Path`; nenhum fato é devolvido |
-| `parse::<T>` | chave duplicada no mesmo bloco após normalização | `Error::Path`; nenhum fato é devolvido |
+| `parse::<T>` | chave duplicada no mesmo bloco | `Error::Path`; nenhum fato é devolvido |
 | `parse::<T>` | entrada acima de 1 MiB, aninhamento acima de 32 | `Error::Parse`; nenhum fato é devolvido |
 | `parse::<T>` | nativo fora do conjunto permitido pelo `Node` | `Error::Native`; nenhum fato é devolvido |
 | `State::insert::<T>(fact)` | caminho malformado, caminho desconhecido, escrita em campo-chave | `Error::Path`; estado inalterado |
@@ -339,14 +340,17 @@ atom     = string | number | "true" | "false" | "null"
          | "{" config "}" ;
 native   = "_core." ident [ "{" config "}" ] ;
 ident    = ( "A".."Z" | "a".."z" | "_" ) { "A".."Z" | "a".."z" | "0".."9" | "_" } ;
-segment  = ( "a".."z" | "0".."9" ) { "a".."z" | "0".."9" | "_" | "-" } ;
+segment  = bare | string ;
+bare     = ( "A".."Z" | "a".."z" | "0".."9" | "_" )
+           { "A".."Z" | "a".."z" | "0".."9" | "_" | "-" } ;
 ```
 
 - `number` e `string` seguem JSON. `ident` nomeia o tipo nativo.
 - `&` é meet de constraints. `|` é disjunção. `&` liga mais forte que `|`; `a & b | c` é `(a & b) | c`. `*` marca o default.
 - `//` inicia comentário de linha. Strings usam aspas duplas e escapes JSON.
 - `a.b.c: v` equivale a `a: { b: { c: v } }`.
-- A caixa é normalizada para ASCII minúsculo antes da validação do segmento.
+- Um segmento é uma palavra nua ou uma string entre aspas. A string aceita qualquer caractere, incluindo `.`, `/`, `*` e maiúsculas.
+- Chaves são case-sensitive: `base0A` e `base0a` são segmentos diferentes.
 - `_core.Nome` fixa o tipo nativo do caminho. Em campo de tipo nativo único, o prefixo MAY ser omitido.
 - Lista de objetos em campo `Vec<T>` é normalizada para um caminho por campo-chave. Objeto em campo `Map<K,V>` usa a chave como segmento.
 
@@ -479,3 +483,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0004: nativos só no host e despacho no Rust. Rejeitados: DSL declarando nativos; mini-linguagem de despacho.
 - ADR-0005: estado inválido é fail-closed. Rejeitados: fallback silencioso; marcação sem bloqueio.
 - ADR-0006: override por folha e compactação explícita. Rejeitados: override por struct; compactação automática.
+- ADR-0007: segmentos de `Path` são strings case-sensitive. Rejeitados: normalização de caixa; `%`-encoding; chave de mapa como categoria opaca.

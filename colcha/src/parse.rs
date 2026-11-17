@@ -367,11 +367,10 @@ impl<'a> Parser<'a> {
                 break;
             }
             let key = self.parse_object_key()?;
-            let normalized = key.to_ascii_lowercase();
             self.expect_char(':')?;
             let value = self.parse_value(depth + 1)?;
-            if map.insert(normalized.clone(), value).is_some() {
-                return Err(self.error(format!("duplicate key '{normalized}'")));
+            if map.insert(key.clone(), value).is_some() {
+                return Err(self.error(format!("duplicate key '{key}'")));
             }
             self.skip_trivia();
             let _ = self.eat_char(',');
@@ -432,7 +431,7 @@ impl<'a> Parser<'a> {
                         };
                         let key_field = node.key_field.as_deref().expect("keyed");
                         let key = match entry.get(key_field) {
-                            Some(Value::String(key)) => key.to_ascii_lowercase(),
+                            Some(Value::String(key)) => key.clone(),
                             _ => {
                                 return Err(Error::path(
                                     path.to_string(),
@@ -461,7 +460,7 @@ impl<'a> Parser<'a> {
                 Value::Map(entry) => {
                     let key_field = node.key_field.as_deref().expect("keyed");
                     let key = match entry.get(key_field) {
-                        Some(Value::String(key)) => key.to_ascii_lowercase(),
+                        Some(Value::String(key)) => key.clone(),
                         _ => {
                             return Err(Error::path(
                                 path.to_string(),
@@ -510,9 +509,8 @@ impl<'a> Parser<'a> {
         value: Value,
         kind: EmitKind,
     ) -> Result<(), Error> {
-        let normalized = field.to_ascii_lowercase();
         let child = base
-            .child(&normalized)
+            .child(field)
             .map_err(|error| Error::path(base.to_string(), error.to_string()))?;
         let node = self
             .root
@@ -567,7 +565,17 @@ impl<'a> Parser<'a> {
 
     fn parse_path_segment(&mut self) -> Result<String, Error> {
         self.skip_trivia();
+        if self.peek_char() == Some('"') {
+            return self.parse_string_literal();
+        }
         let start = self.pos;
+        let Some(first) = self.peek_char() else {
+            return Err(self.error("expected a path segment"));
+        };
+        if !(first.is_ascii_alphanumeric() || first == '_') {
+            return Err(self.error("expected a path segment"));
+        }
+        self.bump_char();
         while let Some(byte) = self.peek_byte() {
             if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' {
                 self.bump_char();
@@ -575,10 +583,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        if self.pos == start {
-            return Err(self.error("expected a path segment"));
-        }
-        Ok(self.source[start..self.pos].to_ascii_lowercase())
+        Ok(self.source[start..self.pos].to_string())
     }
 
     fn parse_number(&mut self) -> Result<Value, Error> {
@@ -650,21 +655,7 @@ impl<'a> Parser<'a> {
                         'n' => output.push('\n'),
                         'r' => output.push('\r'),
                         't' => output.push('\t'),
-                        'u' => {
-                            let mut code = 0u32;
-                            for _ in 0..4 {
-                                let Some(digit) = self.bump_char() else {
-                                    return Err(self.error("short unicode escape"));
-                                };
-                                let value = digit
-                                    .to_digit(16)
-                                    .ok_or_else(|| self.error("invalid unicode escape"))?;
-                                code = code * 16 + value;
-                            }
-                            let character = char::from_u32(code)
-                                .ok_or_else(|| self.error("invalid unicode escape"))?;
-                            output.push(character);
-                        }
+                        'u' => output.push(self.parse_unicode_escape()?),
                         other => {
                             return Err(self.error(format!("invalid escape '\\{other}'")));
                         }
@@ -674,6 +665,40 @@ impl<'a> Parser<'a> {
                 other => output.push(other),
             }
         }
+    }
+
+    fn parse_unicode_escape(&mut self) -> Result<char, Error> {
+        let braced = self.peek_char() == Some('{');
+        if braced {
+            self.bump_char();
+        }
+        let limit = if braced { 6 } else { 4 };
+        let mut digits = String::new();
+        while digits.len() < limit {
+            let Some(ch) = self.peek_char() else {
+                return Err(self.error("short unicode escape"));
+            };
+            if braced && ch == '}' {
+                break;
+            }
+            if !ch.is_ascii_hexdigit() {
+                return Err(self.error("invalid unicode escape"));
+            }
+            self.bump_char();
+            digits.push(ch);
+        }
+        if digits.is_empty() {
+            return Err(self.error("invalid unicode escape"));
+        }
+        if braced {
+            if self.peek_char() != Some('}') {
+                return Err(self.error("unterminated unicode escape"));
+            }
+            self.bump_char();
+        }
+        let code =
+            u32::from_str_radix(&digits, 16).map_err(|_| self.error("invalid unicode escape"))?;
+        char::from_u32(code).ok_or_else(|| self.error("invalid unicode escape"))
     }
 
     fn parse_ident_any(&mut self) -> Result<String, Error> {

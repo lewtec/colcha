@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use colcha::{
     EmptyHost, Error, FactKind, Materialize, Native, NativeHandle, NativeHost, NativeRegistry,
@@ -408,6 +408,146 @@ fn writing_a_key_field_inside_a_block_is_rejected() {
     let error = parse::<Fleet>(r#"servers.alpha: { name: "other", port: 1 }"#, stamp(1))
         .expect_err("key write");
     assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn keyed_lists_accept_quoted_keys() {
+    let state = state_of::<Fleet>(
+        r#"servers."web.1": { port: 1 }
+servers."org/edge": { port: 2 }"#,
+        1,
+    );
+    let fleet = resolve::<Fleet>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        fleet.servers,
+        vec![
+            Server {
+                name: "org/edge".into(),
+                port: 2,
+            },
+            Server {
+                name: "web.1".into(),
+                port: 1,
+            },
+        ]
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Labels {
+    values: BTreeMap<String, String>,
+}
+
+#[test]
+fn map_keys_are_arbitrary_and_case_sensitive() {
+    let state = state_of::<Labels>(
+        r#"
+        values."base0A": "yellow"
+        values."base0a": "lower"
+        values."org/gnome/desktop/interface": "dark"
+        values."a.b": "dot"
+        "#,
+        1,
+    );
+    let labels = resolve::<Labels>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        labels.values.get("base0A").map(String::as_str),
+        Some("yellow")
+    );
+    assert_eq!(
+        labels.values.get("base0a").map(String::as_str),
+        Some("lower")
+    );
+    assert_eq!(
+        labels
+            .values
+            .get("org/gnome/desktop/interface")
+            .map(String::as_str),
+        Some("dark")
+    );
+    assert_eq!(labels.values.get("a.b").map(String::as_str), Some("dot"));
+}
+
+#[test]
+fn map_blocks_preserve_case_and_punctuation() {
+    let state = state_of::<Labels>(
+        r#"
+        values: {
+            "base0A": "yellow"
+            "org/gnome/desktop/interface": "dark"
+        }
+        "#,
+        1,
+    );
+    let labels = resolve::<Labels>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        labels.values.get("base0A").map(String::as_str),
+        Some("yellow")
+    );
+    assert_eq!(
+        labels
+            .values
+            .get("org/gnome/desktop/interface")
+            .map(String::as_str),
+        Some("dark")
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct LabelLists {
+    #[colcha(atomic)]
+    entries: Vec<BTreeMap<String, String>>,
+}
+
+#[test]
+fn object_literals_preserve_case_and_punctuation() {
+    let state = state_of::<LabelLists>(
+        r#"entries: [{ "base0A": "yellow", "org/gnome/desktop/interface": "dark" }]"#,
+        1,
+    );
+    let lists = resolve::<LabelLists>(&state, &EmptyHost).expect("resolve");
+    let entry = &lists.entries[0];
+    assert_eq!(entry.get("base0A").map(String::as_str), Some("yellow"));
+    assert_eq!(
+        entry.get("org/gnome/desktop/interface").map(String::as_str),
+        Some("dark")
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Palette {
+    #[colcha(rename = "base0A")]
+    base_0a: String,
+}
+
+#[test]
+fn renamed_fields_stay_case_sensitive() {
+    let state = state_of::<Palette>(r#"base0A: "yellow""#, 1);
+    let palette = resolve::<Palette>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(palette.base_0a, "yellow");
+
+    let error = parse::<Palette>(r#"base0a: "lower""#, stamp(1)).expect_err("unknown field");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
+fn path_display_round_trips_arbitrary_segments() {
+    let path = colcha::Path::from_segments(vec![
+        "base0A".into(),
+        "org/gnome/desktop/interface".into(),
+        ".config/legacy".into(),
+        "quote\"slash\\".into(),
+        "line\nbreak".into(),
+    ])
+    .expect("path");
+    assert_eq!(
+        path.to_string(),
+        r#"base0A."org/gnome/desktop/interface".".config/legacy"."quote\"slash\\"."line\nbreak""#
+    );
+    assert_eq!(
+        colcha::Path::parse(&path.to_string()).expect("round trip"),
+        path
+    );
 }
 
 #[derive(Debug, Default, PartialEq, Schema, Materialize)]

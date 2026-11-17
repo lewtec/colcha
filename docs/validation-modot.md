@@ -18,10 +18,9 @@ Ele não representa o config real sem extensões.
 ## O que a colcha assume
 
 - `State = BTreeSet<Fact>`. Cada fato tem `Path`, `Stamp`, `SchemaId` e `FactKind`.
-- `Path` tem de 1 a 32 segmentos. Cada segmento tem até 64 bytes.
-- Cada segmento começa com letra minúscula ou dígito.
-- O restante do segmento usa letra minúscula, dígito, `_` ou `-`.
-- `Path::parse` e o parser normalizam letras para minúsculo.
+- `Path` tem de 1 a 32 segmentos. Cada segmento é uma string não vazia e case-sensitive.
+- O parser aceita segmento nu ou string entre aspas. A string pode conter `.`, `/`, `*` e maiúsculas.
+- `Path::Display` cita segmentos que não são palavras nuas e junta os segmentos com `.`.
 - O schema é estático e vem de `T::schema()`.
 - Structs derivadas são fechadas.
 - Enums derivados têm apenas variantes unitárias.
@@ -54,9 +53,9 @@ O protótipo resolveu esse subconjunto. Exemplo: `hosts`, `lazy_tools`,
 
 ## Lacunas
 
-### P0: chaves arbitrárias
+### P0: chaves arbitrárias (resolvido)
 
-O config real usa chaves que não passam na gramática de `Path`.
+O config real usa chaves que não passavam na gramática antiga de `Path`.
 
 Exemplos:
 
@@ -79,13 +78,15 @@ usa letra hexadecimal maiúscula. Os nomes vão de `base00` a `base0F`.
 O repositório não usa `base0a` em lugar nenhum.
 O `base0a` do protótipo veio da normalização da colcha, não do modot.
 
-O parser também normaliza chaves de mapa e de lista para minúsculo.
-Isso impede `base0A` e pode criar colisão entre `Base0A` e `base0a`.
+O parser também normalizava chaves de mapa e de lista para minúsculo.
+Isso impedia `base0A` e podia criar colisão entre `Base0A` e `base0a`.
 
-Direção: separar chave identificadora de chave opaca. A chave opaca preserva os
-bytes e a caixa. O `Path` continua ordenável e serializável. Uma codificação
-canônica evita colisão entre `a/b` e `a.b`. O limite de 64 bytes precisa subir
-ou deixar de valer para chaves opacas.
+Resolução: `Path` agora guarda strings case-sensitive. Cada segmento é uma
+string não vazia. O parser aceita palavra nua ou literal entre aspas. `Display`
+cita todo segmento que não seja palavra nua e usa `.` entre segmentos. A
+codificação é reversível, então `a/b` (um segmento) e `a.b` (dois segmentos) não
+colidem. Testes em `colcha/tests/core.rs` cobrem `base0A`, `base0a`, barras,
+pontos e round-trip de `Display`.
 
 ### P0: valores arbitrários
 
@@ -210,7 +211,7 @@ contrato de `SchemaId`.
 
 ## Prioridade
 
-1. Chaves opacas com caixa preservada. Desbloqueia `file.home`, `drivers`,
+1. Chaves opacas com caixa preservada. Feito. Desbloqueia `file.home`, `drivers`,
    `base0A`, `dconf` e `$schema`.
 2. Folha `Raw` com `NodeOf` e `Materialize`. Desbloqueia `values`, `options` e
    `desktop.raw`.

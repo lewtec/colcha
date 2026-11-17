@@ -53,7 +53,7 @@ Status meanings: `yes` means colcha covers the feature.
 | Open structs | base16-gtk | `#gtkSettingsShared` ends with `...` | no |
 | Optional fields and maps | webapp | `apps?: [string]: {...}`, `profile?` | partial |
 | Open lists | webapp | `extra_flags: [...string]` | partial |
-| Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | no |
+| Arbitrary and case-sensitive keys | base16-gtk, schema | `base0A`, `org/gnome/desktop/interface`, `/.config/legacy` | yes |
 | Templated files | configdash, base16-gtk | `file.home[...]` entries carry `type` and `values` | no |
 | Closed definitions and unions | schema | `#BackupAction` selects `git_repo_sync` or `archive` | partial |
 | Lists of structs | schema | `backup.actions` keeps input order | partial |
@@ -65,8 +65,6 @@ Status meanings: `yes` means colcha covers the feature.
 
 The corpus also pins behaviour that colcha does not model yet:
 
-- `Path` lowercases segments and accepts only `[a-z0-9][a-z0-9_-]*`.
-  CUE keys accept slashes, dots, uppercase, and glob characters.
 - `Option<T>` treats `null` and absence as the same value.
 - `Vec<T>` is a keyed map by default, so input order is lost.
 - Enums accept unit variants only.
