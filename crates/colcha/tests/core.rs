@@ -239,6 +239,34 @@ fn parse_reports_bad_syntax() {
 }
 
 #[test]
+fn concrete_parse_rejects_authored_syntax() {
+    let sources = [
+        r#"name: host"#,
+        r#"name: "a\(host)""#,
+        r#"if true { name: "x" }"#,
+        r#"for item in ["a"] { name: item }"#,
+        r#""key\(name)": "x""#,
+    ];
+    for source in sources {
+        let error = parse::<Service>(source, stamp(1)).expect_err(source);
+        assert!(matches!(error, Error::Parse { .. }), "{source}: {error:?}");
+    }
+}
+
+#[test]
+fn duplicate_fields_in_a_block_are_a_path_error() {
+    let error = parse::<Service>(
+        r#"
+        name: "a"
+        name: "b"
+        "#,
+        stamp(1),
+    )
+    .expect_err("duplicate");
+    assert!(matches!(error, Error::Path { .. }), "{error:?}");
+}
+
+#[test]
 fn compact_preserves_the_current_fold() {
     let one = state_of::<Service>(r#"name: "first""#, 1);
     let two = state_of::<Service>(r#"name: "second""#, 2);

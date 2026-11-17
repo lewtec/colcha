@@ -47,11 +47,11 @@ idempotente quando não há valores diferentes no mesmo caminho.
 
 ## Consequences
 
-`parse` continua sendo o front end do subconjunto concreto. `evaluate` cobre a
-autoria e pode evoluir sem tocar na álgebra. O custo é uma segunda gramática
-voltada a autoria, limitada de propósito: sem aritmética, `&&`, `||`, funções,
-imports ou módulos. Um campo que só declara constraints não é referenciável,
-porque não tem valor concreto.
+`parse` continua sendo o front end do subconjunto concreto e reutiliza o mesmo
+parser do avaliador em modo concreto (ADR-0015). `evaluate` cobre a autoria e
+pode evoluir sem tocar na álgebra. A gramática é uma só, limitada de propósito:
+sem aritmética, `&&`, `||`, funções, imports ou módulos. Um campo que só declara
+constraints não é referenciável, porque não tem valor concreto.
 
 ## Rejected
 

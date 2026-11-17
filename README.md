@@ -136,7 +136,7 @@ References, conditionals, comprehensions, interpolation and non-literal defaults
 authoring -> resolution -> facts -> State -> fold -> Materialize
 ```
 
-`evaluate::<T>(source, &context, stamp)` performs that resolution. It emits only `Fact`s with concrete `Value`s, so `fold` and `Materialize` never see authored syntax. `parse` remains the concrete subset front end; `evaluate` adds references and the other authored forms.
+`evaluate::<T>(source, &context, stamp)` performs that resolution. It emits only `Fact`s with concrete `Value`s, so `fold` and `Materialize` never see authored syntax. `parse::<T>` and `evaluate::<T>` share one parser; `parse` runs it in concrete mode and rejects references, interpolation, conditionals, comprehensions and templated keys with `Error::Parse`.
 
 ```rust
 use colcha::{Context, EmptyHost, NodeId, Stamp, State, evaluate, resolve};

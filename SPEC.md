@@ -232,7 +232,7 @@ impl State {
 }
 ```
 
-`parse` lê o subconjunto concreto da DSL. `evaluate` lê a autoria completa, resolve referências, interpolação, condicionais, comprehensions e defaults não literais, e devolve fatos concretos. `fold` é a verificação pura. `resolve` executa `fold`, valida a identidade do schema e materializa; só `resolve` chama `NativeHost::build`.
+`parse` e `evaluate` compartilham um único parser. `parse` usa o modo concreto, que rejeita referência, interpolação, condicional, comprehension e chave com template como `Error::Parse`. `evaluate` usa o modo de autoria, resolve referências, interpolação, condicionais, comprehensions e defaults não literais, e devolve fatos concretos. `fold` é a verificação pura. `resolve` executa `fold`, valida a identidade do schema e materializa; só `resolve` chama `NativeHost::build`.
 
 ## Resolution phase
 
@@ -426,7 +426,9 @@ O parser MUST aceitar este subconjunto. A gramática é a autoridade; o exemplo 
 
 ```ebnf
 config   = { field } ;
-field    = path ":" expr | path "{" config "}" ;
+field    = path ":" field
+         | path ":" expr
+         | path "{" config "}" ;
 path     = segment { "." segment } ;
 expr     = term { ( "&" | "|" ) term } ;
 term     = "*" atom
@@ -636,3 +638,4 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - ADR-0012: resolução antes da materialização. Rejeitados: referências como fatos; resolver durante a dobra; schema dinâmico dentro de `fold`.
 - ADR-0013: avaliador embutido na resolução. Rejeitados: avaliar na dobra; engine CUE completo; substituição textual de referências.
 - ADR-0014: listas são por chave ou atômicas. Rejeitados: concatenação por stamp; ordem de chegada como ordem da lista.
+- ADR-0015: parser único com modo concreto. Rejeitados: dois parsers sincronizados; `parse` com `Context` vazio.

@@ -74,6 +74,15 @@ impl Context {
     }
 }
 
+/// Parse concrete text into facts for `T`.
+///
+/// The concrete mode accepts values, constraints, defaults, natives, object and
+/// list literals, and block shorthand. References, interpolation, conditionals,
+/// comprehensions and templated keys are rejected as parse errors.
+pub fn parse<T: Schema>(source: &str, stamp: Stamp) -> Result<Vec<Fact>, Error> {
+    run::<T>(source, &Context::new(), stamp, true)
+}
+
 /// Evaluate authored text into concrete facts for `T`.
 ///
 /// All references, conditionals, comprehensions, interpolation and non-literal
@@ -84,6 +93,15 @@ pub fn evaluate<T: Schema>(
     context: &Context,
     stamp: Stamp,
 ) -> Result<Vec<Fact>, Error> {
+    run::<T>(source, context, stamp, false)
+}
+
+fn run<T: Schema>(
+    source: &str,
+    context: &Context,
+    stamp: Stamp,
+    concrete: bool,
+) -> Result<Vec<Fact>, Error> {
     if source.len() > MAX_INPUT {
         return Err(Error::parse(
             1,
@@ -93,8 +111,17 @@ pub fn evaluate<T: Schema>(
     }
     let root = T::schema();
     let schema = SchemaId::new(T::NAME, T::VERSION);
-    let entries = Parser::new(source).parse_document()?;
-    let mut collector = Collector::new(&root);
+    let mut parser = if concrete {
+        Parser::concrete(source)
+    } else {
+        Parser::new(source)
+    };
+    let entries = parser.parse_document()?;
+    let mut collector = if concrete {
+        Collector::concrete(&root)
+    } else {
+        Collector::new(&root)
+    };
     collector.collect_block(&Path::root(), &entries, &[], &Locals::default())?;
     collector.expand_tasks(context)?;
     collector.emit(context, schema, stamp)
@@ -199,6 +226,7 @@ struct Parser<'a> {
     pos: usize,
     line: usize,
     column: usize,
+    concrete: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -209,6 +237,14 @@ impl<'a> Parser<'a> {
             pos: 0,
             line: 1,
             column: 1,
+            concrete: false,
+        }
+    }
+
+    fn concrete(source: &'a str) -> Parser<'a> {
+        Parser {
+            concrete: true,
+            ..Parser::new(source)
         }
     }
 
@@ -240,9 +276,15 @@ impl<'a> Parser<'a> {
     fn parse_entry(&mut self, depth: usize) -> Result<Entry, Error> {
         self.skip_trivia();
         if self.starts_with_ident("if") {
+            if self.concrete {
+                return Err(self.error("conditionals are not allowed in concrete input"));
+            }
             return self.parse_conditional(depth);
         }
         if self.starts_with_ident("for") {
+            if self.concrete {
+                return Err(self.error("comprehensions are not allowed in concrete input"));
+            }
             return self.parse_comprehension(depth);
         }
         self.parse_field(depth)
@@ -496,6 +538,9 @@ impl<'a> Parser<'a> {
         match next {
             '"' => match self.parse_string_value()? {
                 StringValue::Literal(text) => Ok(ValueAst::String(text)),
+                StringValue::Template(_) if self.concrete => {
+                    Err(self.error("interpolation is not allowed in concrete input"))
+                }
                 StringValue::Template(template) => Ok(ValueAst::Template(template)),
             },
             '[' => self.parse_list_value(depth),
@@ -519,6 +564,9 @@ impl<'a> Parser<'a> {
                         Ok(ValueAst::Null)
                     }
                     _ => {
+                        if self.concrete {
+                            return Err(self.error("expected a concrete value"));
+                        }
                         let path = self.parse_reference_segments()?;
                         Ok(ValueAst::Reference(path))
                     }
@@ -596,10 +644,13 @@ impl<'a> Parser<'a> {
     fn parse_key_segment(&mut self) -> Result<Segment, Error> {
         self.skip_trivia();
         if self.peek_char() == Some('"') {
-            return Ok(match self.parse_string_value()? {
-                StringValue::Literal(text) => Segment::Literal(text),
-                StringValue::Template(template) => Segment::Template(template),
-            });
+            return match self.parse_string_value()? {
+                StringValue::Literal(text) => Ok(Segment::Literal(text)),
+                StringValue::Template(_) if self.concrete => {
+                    Err(self.error("interpolation is not allowed in a concrete key"))
+                }
+                StringValue::Template(template) => Ok(Segment::Template(template)),
+            };
         }
         let start = self.pos;
         let Some(first) = self.peek_char() else {
@@ -970,6 +1021,7 @@ struct Collector<'a> {
     root: &'a Node,
     decls: Vec<Decl>,
     tasks: Vec<Task>,
+    concrete: bool,
 }
 
 impl<'a> Collector<'a> {
@@ -978,6 +1030,14 @@ impl<'a> Collector<'a> {
             root,
             decls: Vec::new(),
             tasks: Vec::new(),
+            concrete: false,
+        }
+    }
+
+    fn concrete(root: &'a Node) -> Collector<'a> {
+        Collector {
+            concrete: true,
+            ..Collector::new(root)
         }
     }
 
@@ -988,10 +1048,17 @@ impl<'a> Collector<'a> {
         guards: &[Guard],
         locals: &Locals,
     ) -> Result<(), Error> {
+        let mut declared: BTreeSet<Path> = BTreeSet::new();
         for entry in entries {
             match &entry.kind {
                 EntryKind::Field { segments, value } => {
                     let path = build_path(base, segments, locals)?;
+                    if self.concrete && !declared.insert(path.clone()) {
+                        return Err(Error::path(
+                            path.to_string(),
+                            "field declared twice in the same block",
+                        ));
+                    }
                     let node = self
                         .root
                         .lookup(&path)
@@ -1157,6 +1224,14 @@ impl<'a> Collector<'a> {
     }
 
     fn emit(self, context: &Context, schema: SchemaId, stamp: Stamp) -> Result<Vec<Fact>, Error> {
+        let mut emitter = Emitter::new(self.root, schema, stamp);
+        if self.concrete {
+            for decl in &self.decls {
+                Self::emit_decl(&mut emitter, self.root, &self.decls, context, decl)?;
+            }
+            return Ok(emitter.into_facts());
+        }
+
         let mut active: BTreeMap<Path, &Decl> = BTreeMap::new();
         for decl in &self.decls {
             let resolver = Resolver::new(self.root, &self.decls, context);
@@ -1172,23 +1247,31 @@ impl<'a> Collector<'a> {
             }
         }
 
-        let mut emitter = Emitter::new(self.root, schema, stamp);
-        for (path, decl) in active {
-            let resolver = Resolver::new(self.root, &self.decls, context);
-            let mut stack = Vec::new();
-            let expr = resolver.expr_for(decl, &mut stack)?.ok_or_else(|| {
-                Error::eval(
-                    path.to_string(),
-                    "expression does not resolve to a concrete value",
-                )
-            })?;
-            let node = self
-                .root
-                .lookup(&path)
-                .map_err(|reason| Error::path(path.to_string(), reason))?;
-            emitter.emit_expr(&path, node, expr)?;
+        for decl in active.values() {
+            Self::emit_decl(&mut emitter, self.root, &self.decls, context, decl)?;
         }
         Ok(emitter.into_facts())
+    }
+
+    fn emit_decl(
+        emitter: &mut Emitter<'_>,
+        root: &Node,
+        decls: &[Decl],
+        context: &Context,
+        decl: &Decl,
+    ) -> Result<(), Error> {
+        let resolver = Resolver::new(root, decls, context);
+        let mut stack = Vec::new();
+        let expr = resolver.expr_for(decl, &mut stack)?.ok_or_else(|| {
+            Error::eval(
+                decl.path.to_string(),
+                "expression does not resolve to a concrete value",
+            )
+        })?;
+        let node = root
+            .lookup(&decl.path)
+            .map_err(|reason| Error::path(decl.path.to_string(), reason))?;
+        emitter.emit_expr(&decl.path, node, expr)
     }
 }
 
