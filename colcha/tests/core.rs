@@ -409,3 +409,106 @@ fn writing_a_key_field_inside_a_block_is_rejected() {
         .expect_err("key write");
     assert!(matches!(error, Error::Path { .. }), "{error:?}");
 }
+
+#[derive(Debug, Default, PartialEq, Schema, Materialize)]
+enum Mode {
+    #[default]
+    #[colcha(rename = "off")]
+    Off,
+    #[colcha(rename = "on")]
+    On,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Natural {
+    name: String,
+    enabled: bool,
+    tags: BTreeSet<String>,
+    mode: Mode,
+    note: Option<String>,
+}
+
+#[test]
+fn natural_defaults_fill_a_partial_struct() {
+    let state = state_of::<Natural>(r#"name: "svc""#, 1);
+    let value = fold::<Natural>(&state, &EmptyHost).expect("fold");
+    let map = value.as_map().expect("map");
+    assert_eq!(map.get("enabled"), Some(&Value::Bool(false)));
+    assert_eq!(map.get("tags"), Some(&Value::List(Vec::new())));
+    assert_eq!(map.get("mode"), Some(&Value::String("off".into())));
+    assert_eq!(map.get("note"), Some(&Value::Null));
+
+    let natural = resolve::<Natural>(&state, &EmptyHost).expect("resolve");
+    assert_eq!(
+        natural,
+        Natural {
+            name: "svc".into(),
+            enabled: false,
+            tags: BTreeSet::new(),
+            mode: Mode::Off,
+            note: None,
+        }
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct AllDefaults {
+    enabled: bool,
+    tags: BTreeSet<String>,
+    mode: Mode,
+    note: Option<String>,
+}
+
+#[test]
+fn a_struct_composes_the_defaults_of_its_fields() {
+    let default = resolve::<AllDefaults>(&State::empty(), &EmptyHost).expect("resolve");
+    assert_eq!(
+        default,
+        AllDefaults {
+            enabled: false,
+            tags: BTreeSet::new(),
+            mode: Mode::Off,
+            note: None,
+        }
+    );
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct Required {
+    name: String,
+}
+
+#[test]
+fn a_type_without_a_natural_default_stays_required() {
+    let error = fold::<Required>(&State::empty(), &EmptyHost).expect_err("required");
+    assert!(matches!(error, Error::Fold { .. }), "{error:?}");
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+enum Fallback {
+    #[colcha(default)]
+    Off,
+    On,
+}
+
+#[derive(Debug, PartialEq, Schema, Materialize)]
+struct UsesFallback {
+    mode: Fallback,
+}
+
+#[test]
+fn a_colcha_default_variant_works_without_deriving_default() {
+    let value = resolve::<UsesFallback>(&State::empty(), &EmptyHost).expect("resolve");
+    assert_eq!(
+        value,
+        UsesFallback {
+            mode: Fallback::Off,
+        }
+    );
+}
+
+#[test]
+fn a_keyed_list_defaults_to_empty() {
+    let fleet = resolve::<Fleet>(&State::empty(), &EmptyHost).expect("resolve");
+    assert!(fleet.servers.is_empty());
+}

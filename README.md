@@ -39,8 +39,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
         name:      "db-alerts"
         threshold: 42.0 & <=100
-        tags:      ["prod"]
-        muted:     false
     "#;
 
     let mut state = State::empty();
@@ -50,6 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let alert = resolve::<Alert>(&state, &colcha::EmptyHost)?;
     assert_eq!(alert.threshold, 42.0);
+    assert_eq!(alert.muted, false);
+    assert!(alert.tags.is_empty());
     Ok(())
 }
 ```
@@ -68,7 +68,7 @@ alert.db-alerts: {
 }
 ```
 
-`db-alerts` becomes the element key, so `name` needs no write. A native `Webhook` runs per element only during `resolve`.
+`db-alerts` becomes the element key, so `name` needs no write. `severity` defaults to `warn` from the enum's `#[default]`; `tags` and `muted` use their natural defaults. A native `Webhook` runs per element only during `resolve`.
 
 ```text
 cargo run -p colcha --example alert
@@ -130,6 +130,24 @@ Config {
 | Tombstone | fact that absorbs older facts in its path subtree |
 
 Defaults, constraints and candidates stay in the state. A candidate that violates a constraint loses without causing a conflict. Without a valid candidate, the fold uses the config default, then the schema default, then `Error::Fold`.
+
+## Defaults
+
+Each type answers one question: does it have a natural default? If yes, the field opens as `*default | type` and absence stays valid. If no, the field must be present.
+
+| Type | Natural default |
+|------|-----------------|
+| `bool` | `false` |
+| `Option<T>` | `null` |
+| `Vec<T>` | `[]` |
+| `BTreeSet<T>`, `HashSet<T>` | `[]` |
+| `BTreeMap<String, V>`, `HashMap<String, V>` | `{}` |
+| enum with `#[default]` or `#[colcha(default)]` | the variant segment |
+| struct whose fields all have defaults | composition of those defaults |
+
+`String`, integers, `f32`, `f64` and native types have no natural default. A field of one of those types must be present. To accept absence, wrap the field in `Option<T>`. There is no `Required<T>`.
+
+`#[colcha(default = <literal>)]` overrides the natural default. On an enum, `#[default]` comes from `#[derive(Default)]`; `#[colcha(default)]` marks the variant without deriving `Default`.
 
 ## Keyed collections
 

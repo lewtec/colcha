@@ -364,6 +364,20 @@ segment  = ( "a".."z" | "0".."9" ) { "a".."z" | "0".."9" | "_" | "-" } ;
 
 Default de config é um fato `FactKind::Default`; default de schema é `Node.default`. A dobra usa candidato comum válido primeiro. Sem candidato comum válido, usa o default de config válido de maior `Stamp`. Sem default de config válido, usa `Node.default` se ele for válido. Entre defaults de config, a política do campo decide. Sem default válido e campo obrigatório, a dobra devolve `Error::Fold`. Campo `Option<T>` ausente é `None`, sem erro.
 
+Default natural é `*default | type`. O derive preenche `Node.default` via `NodeOf::default_value()`:
+
+| Tipo | `Node.default` |
+|------|----------------|
+| `bool` | `false` |
+| `Option<T>` | `null` |
+| `Vec<T>` | `[]` |
+| `BTreeSet<T>`, `HashSet<T>` | `[]` |
+| `BTreeMap<String, V>`, `HashMap<String, V>` | `{}` |
+| enum com variante `#[default]` ou `#[colcha(default)]` | segmento da variante |
+| struct cujos campos têm default | composição dos defaults |
+
+`String`, inteiros, `f32`, `f64` e tipos nativos não têm default natural: o campo é obrigatório. Um campo sem default natural aceita ausência por `Option<T>`; não existe `Required<T>`. `#[colcha(default = <literal>)]` sobrescreve o default natural.
+
 Tombstone é um fato `FactKind::Tombstone`. Ele absorve todo fato no mesmo caminho e em caminhos descendentes quando o `stamp` do fato é menor ou igual ao `stamp` do tombstone. Um fato posterior com `stamp` maior ressuscita o caminho.
 
 Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra preenche o campo-chave no map de cada elemento. A dobra de nativo valida os nomes dos argumentos contra `Native::args` e rejeita argumento desconhecido com `Error::Fold`.
@@ -376,8 +390,9 @@ Lista por chave dobra em `Value::List` ordenado pelo segmento da chave. A dobra 
 | `#[colcha(atomic)]` | campo `Vec<T>` | usa `FoldPolicy::Atomic`; a ordem é a do valor |
 | `#[colcha(native)]` | campo de tipo nativo | emite `NodeKind::Native` com `NativeType::NAME`; a materialização chama `build` |
 | `#[colcha(flat)]` | campo | usa `FoldPolicy::Flat` |
-| `#[colcha(default = <literal>)]` | campo | preenche `Node.default` com o literal |
-| `#[colcha(rename = "...")]` | campo | troca o segmento do caminho |
+| `#[colcha(default = <literal>)]` | campo | sobrescreve `Node.default` com o literal |
+| `#[colcha(default)]` | variante de enum | marca a variante default quando `#[default]` não é usado |
+| `#[colcha(rename = "...")]` | campo ou variante | troca o segmento do caminho |
 | `#[colcha(version = N)]` | struct raiz | define `Schema::VERSION`; o default é 1 |
 
 `Vec<T>` sem `#[colcha(atomic)]` MUST ter exatamente um campo `#[colcha(key)]`. `#[colcha(key)]` fora de `Vec<T>` é erro de compilação. Atributo desconhecido é erro de compilação.
@@ -390,12 +405,12 @@ alert: {
   threshold: float & >=0 & <=100
   severity:  *"warn" | "page" | "info"
   notify:    _core.Webhook { url: "https://example.test/hook" }
-  tags:      ["db", "prod"]
-  muted:     false
+  tags:      *[] | ["db", "prod"]
+  muted:     *false | bool
 }
 ```
 
-Três contribuições independentes somam em qualquer ordem. `threshold` faz meet. `tags` faz união. `severity` usa o default sobrescrito. `muted` usa LWW. `notify` dobra os args do `Webhook` sem abrir nada. O único efeito é `Webhook::build` no `resolve`.
+Três contribuições independentes somam em qualquer ordem. `threshold` faz meet. `tags` faz união. `severity` usa o default da variante. `muted` usa o default natural `false`. `notify` dobra os args do `Webhook` sem abrir nada. O único efeito é `Webhook::build` no `resolve`.
 
 ## Quality
 
@@ -419,6 +434,7 @@ Residual risk: `NativeHost::build` pode fazer qualquer coisa; o host responde po
 - [ ] Dois candidatos `Lww` válidos com stamps diferentes: o de maior stamp vence.
 - [ ] Candidato que viola constraint nunca vence candidato válido.
 - [ ] Todos os candidatos inválidos com default: a dobra devolve o default. Sem default: `Error::Fold`.
+- [ ] `bool`, `Option<T>`, coleções e enum com `#[default]` preenchem campo ausente; `String` e números sem default devolvem `Error::Fold`.
 - [ ] `resolve` não chama `build` quando a dobra falha.
 - [ ] `parse` rejeita `servers.foo.name` quando `name` é campo-chave.
 - [ ] `resolve` rejeita estado com `SchemaId` diferente de `T::NAME` + `T::VERSION`.

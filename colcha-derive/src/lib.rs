@@ -117,8 +117,10 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
     };
 
     let mut entries = Vec::new();
+    let mut default_entries = Vec::new();
     let mut assertions = Vec::new();
     let mut key_fields = Vec::new();
+    let mut has_native = false;
 
     for field in &fields.named {
         let ident = field
@@ -156,6 +158,27 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
             fields.insert(#segment.to_string(), #node);
         });
 
+        let ty = &field.ty;
+        let default_entry = if attrs.native {
+            has_native = true;
+            quote!(return ::std::option::Option::None;)
+        } else if let Some(default) = &attrs.default {
+            let value = lit_to_value(default)?;
+            quote! {
+                fields.insert(#segment.to_string(), #value);
+            }
+        } else {
+            quote! {
+                match <#ty as ::colcha::NodeOf>::default_value() {
+                    ::std::option::Option::Some(value) => {
+                        fields.insert(#segment.to_string(), value);
+                    }
+                    ::std::option::Option::None => return ::std::option::Option::None,
+                }
+            }
+        };
+        default_entries.push(default_entry);
+
         if !attrs.atomic {
             if let Some(element) = vec_element_inside_option(&field.ty) {
                 assertions.push(quote! {
@@ -186,6 +209,15 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
     } else {
         quote!(None)
     };
+    let default_body = if has_native {
+        quote!(::std::option::Option::None)
+    } else {
+        quote!({
+            let mut fields = ::std::collections::BTreeMap::new();
+            #(#default_entries)*
+            ::std::option::Option::Some(::colcha::Value::Map(fields))
+        })
+    };
 
     Ok(quote! {
         #(#assertions)*
@@ -193,12 +225,17 @@ fn schema_struct(input: &DeriveInput, data: &syn::DataStruct) -> syn::Result<Tok
         impl ::colcha::NodeOf for #name {
             const KEY_FIELD: Option<&'static str> = #key_field;
 
+            fn default_value() -> ::std::option::Option<::colcha::Value> {
+                #default_body
+            }
+
             fn node() -> ::colcha::Node {
                 let mut fields = ::std::collections::BTreeMap::new();
                 #(#entries)*
                 let mut node = ::colcha::Node::structure();
                 node.fields = fields;
                 node.key_field = #node_key_field;
+                node.default = <Self as ::colcha::NodeOf>::default_value();
                 node
             }
         }
@@ -219,6 +256,7 @@ fn schema_enum(input: &DeriveInput, data: &syn::DataEnum) -> syn::Result<TokenSt
     let name = &input.ident;
     let version = struct_version(&input.attrs)?;
     let mut variants = Vec::new();
+    let mut default_segment = None;
     for variant in &data.variants {
         if !matches!(variant.fields, Fields::Unit) {
             return Err(syn::Error::new_spanned(
@@ -230,16 +268,40 @@ fn schema_enum(input: &DeriveInput, data: &syn::DataEnum) -> syn::Result<TokenSt
         let segment = attrs
             .rename
             .unwrap_or_else(|| variant.ident.to_string().to_ascii_lowercase());
+        let is_default = attrs.default
+            || variant
+                .attrs
+                .iter()
+                .any(|attribute| attribute.path().is_ident("default"));
+        if is_default {
+            if default_segment.is_some() {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "a colcha enum has at most one default variant",
+                ));
+            }
+            default_segment = Some(segment.clone());
+        }
         variants.push((variant.ident.clone(), segment));
     }
     let values = variants
         .iter()
         .map(|(_, segment)| quote!(#segment.to_string()));
     let key_field = quote!(None);
+    let default_value = match default_segment {
+        Some(segment) => quote!(::std::option::Option::Some(::colcha::Value::String(
+            #segment.to_string()
+        ))),
+        None => quote!(::std::option::Option::None),
+    };
 
     Ok(quote! {
         impl ::colcha::NodeOf for #name {
             const KEY_FIELD: Option<&'static str> = #key_field;
+
+            fn default_value() -> ::std::option::Option<::colcha::Value> {
+                #default_value
+            }
 
             fn node() -> ::colcha::Node {
                 let mut node = ::colcha::Node::leaf(::colcha::FoldPolicy::Flat);
@@ -247,6 +309,7 @@ fn schema_enum(input: &DeriveInput, data: &syn::DataEnum) -> syn::Result<TokenSt
                 node.constraints.push(::colcha::Constraint::OneOf(vec![
                     #(::colcha::Value::String(#values)),*
                 ]));
+                node.default = <Self as ::colcha::NodeOf>::default_value();
                 node
             }
         }
@@ -266,6 +329,7 @@ fn schema_enum(input: &DeriveInput, data: &syn::DataEnum) -> syn::Result<TokenSt
 #[derive(Default)]
 struct VariantAttrs {
     rename: Option<String>,
+    default: bool,
 }
 
 fn variant_attrs(variant: &syn::Variant) -> syn::Result<VariantAttrs> {
@@ -279,6 +343,9 @@ fn variant_attrs(variant: &syn::Variant) -> syn::Result<VariantAttrs> {
                 let value = meta.value()?;
                 let literal = value.parse::<LitStr>()?;
                 attrs.rename = Some(literal.value());
+                Ok(())
+            } else if meta.path.is_ident("default") {
+                attrs.default = true;
                 Ok(())
             } else {
                 Err(meta.error("unknown colcha variant attribute"))

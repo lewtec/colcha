@@ -24,19 +24,18 @@ struct Alert {
     #[colcha(key)]
     name: String,
     threshold: f64,
-    #[colcha(default = "warn")]
     severity: Severity,
     #[colcha(native)]
     notify: Webhook,
     tags: BTreeSet<String>,
-    #[colcha(default = false)]
     muted: bool,
 }
 
-#[derive(Debug, PartialEq, Schema, Materialize)]
+#[derive(Debug, Default, PartialEq, Schema, Materialize)]
 enum Severity {
     #[colcha(rename = "info")]
     Info,
+    #[default]
     #[colcha(rename = "warn")]
     Warn,
     #[colcha(rename = "page")]
